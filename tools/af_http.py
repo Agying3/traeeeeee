@@ -109,6 +109,12 @@ async def main():
     # ── 阶段0: 浏览器养fp(零交互, 全程抓包只观察) ──
     pr("[P0] 打开授权页养fp(零交互)...")
     context = lib.LoginContext(args.variant, 0)
+    
+    try:
+        (ROOT / "tmp" / "http-trace" / f"{RUN_ID}-context.json").write_text(
+            json.dumps(context.to_json(), ensure_ascii=False, indent=1), encoding="utf-8")
+    except Exception:
+        pass
     auth_url = lib.verification_uri("https://www.trae.cn", context)
     trace("auth_url", url=auth_url)
     try:
@@ -490,8 +496,9 @@ async def main():
     import requests as rq
     sess = rq.Session()
     sess.cookies.update(all_cookies)
-    sess.proxies = {"http": f"http://{user2}:{pwd2}@{ip2}:{port2}",
-                    "https": f"http://{user2}:{pwd2}@{ip2}:{port2}"}
+    _ip, _port, _user, _pwd = load_proxy(idx)
+    sess.proxies = {"http": f"http://{_user}:{_pwd}@{_ip}:{_port}",
+                    "https": f"http://{_user}:{_pwd}@{_ip}:{_port}"}
     try:
         exchange = lib.exchange_auth_code(context, auth_code, lib.DEFAULT_LOGIN_HOST,
                                           session=sess, trace=None)
