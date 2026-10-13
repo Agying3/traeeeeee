@@ -260,6 +260,37 @@ async def solve_slider(page, ctx, cdp, diagnostics, max_attempts):
     return False, None
 
 
+async def prewarm(proxy_index: int):
+    """冷却窗内预热: 提前启动 CloakBrowser + 打开登录页(不填号)。
+
+    预热成功后 run_stage1 检测到全局 PREWARM_CTX 直接复用, 跳过冷启动。
+    失败静默(调用方回退冷启动)。"""
+    global PREWARM_CTX
+    from cloakbrowser import launch_persistent_context_async
+    lines = lib.load_proxies(PROXY_FILE)
+    proxy_line = lines[proxy_index]
+    ip, port, user, pwd = proxy_line.split(":", 3)
+    seed = lib.fingerprint_seed_for(proxy_index)
+    profile_dir = PROFILES / f"cloak-{proxy_index}"
+    profile_dir.mkdir(parents=True, exist_ok=True)
+    ctx = await launch_persistent_context_async(
+        user_data_dir=str(profile_dir),
+        headless=False,
+        proxy=f"http://{user}:{pwd}@{ip}:{port}",
+        geoip=True, humanize=True,
+        args=[f"--fingerprint={seed}", "--window-size=700,800", "--disable-http2", "--lang=zh-CN"],
+        locale="zh-CN",
+    )
+    page = ctx.pages[0] if ctx.pages else await ctx.new_page()
+    try:
+        await page.goto("https://www.trae.cn/login", wait_until="domcontentloaded",
+                        timeout=WAIT_SECONDS * 1000)
+    except BrowserTimeout:
+        pass
+    PREWARM_CTX = {"ctx": ctx, "proxy_index": proxy_index}
+    pr("[i] ★ 预热完成: 浏览器+登录页就绪, 冷却结束即可填号")
+
+
 async def run_stage1(proxy_index: int, phone: str, headless: bool = False, attempts: int = 3,
                      keep_open_on_error: bool = True):
     """完整浏览器段: 返回 session 文件路径(短信已发出), 失败抛异常。"""
@@ -278,6 +309,20 @@ async def run_stage1(proxy_index: int, phone: str, headless: bool = False, attem
     SESSIONS.mkdir(parents=True, exist_ok=True)
     pr(f"[i] 代理#{proxy_index} {ip}:{port} 指纹seed={seed} profile={profile_dir.name}")
 
+    global PREWARM_CTX
+    if PREWARM_CTX and PREWARM_CTX.get("proxy_index") == proxy_index:
+        pr("[i] ★ 复用预热浏览器(跳过冷启动)")
+        ctx = PREWARM_CTX["ctx"]
+        PREWARM_CTX = None
+        return await _run_stage1_on_ctx(ctx, proxy_index, phone, headless, attempts)
+    if PREWARM_CTX and PREWARM_CTX.get("proxy_index") != proxy_index:
+        # 换了代理: 预热的浏览器作废(指纹/IP 不匹配)
+        try:
+            await PREWARM_CTX["ctx"].close()
+        except Exception:
+            pass
+        PREWARM_CTX = None
+
     ctx = await launch_persistent_context_async(
         user_data_dir=str(profile_dir),
         headless=headless,
@@ -287,6 +332,21 @@ async def run_stage1(proxy_index: int, phone: str, headless: bool = False, attem
         args=[f"--fingerprint={seed}", "--window-size=700,800", "--disable-http2", "--lang=zh-CN"],
         locale="zh-CN",
     )
+    return await _run_stage1_on_ctx(ctx, proxy_index, phone, headless, attempts)
+
+
+async def _run_stage1_on_ctx(ctx, proxy_index: int, phone: str, headless: bool,
+                             attempts: int):
+    """在给定浏览器上下文上执行 stage1 主体(登录页→填号→滑块→SDK重发→导出)。"""
+    global KEEP_OPEN
+    lines = lib.load_proxies(PROXY_FILE)
+    proxy_line = lines[proxy_index]
+    ip, port, user, pwd = proxy_line.split(":", 3)
+    lib.record_proxy_use(LEDGER, proxy_line, "stage1_captcha", RUN_ID)
+    seed = lib.fingerprint_seed_for(proxy_index)
+    profile_dir = PROFILES / f"cloak-{proxy_index}"
+    RUN_DIR.mkdir(parents=True, exist_ok=True)
+    SESSIONS.mkdir(parents=True, exist_ok=True)
     diagnostics = None
     sms_sent = False
     try:
@@ -415,6 +475,7 @@ async def run_stage1(proxy_index: int, phone: str, headless: bool = False, attem
             await diagnostics.snapshot("no_sms_success")
 
         # ── 导出会话(浏览器使命完成) ──
+        # 提速: 短信已确认发出 → 立即关浏览器(收码期间并行导出), 省关机串行等待
         cookies = await ctx.cookies()
         local_storage = {}
         try:
@@ -443,6 +504,13 @@ async def run_stage1(proxy_index: int, phone: str, headless: bool = False, attem
         # 会话含登录态敏感数据, 只落 tmp/(gitignore)
         session_path.write_text(json.dumps(session, ensure_ascii=False, indent=1), encoding="utf-8")
         pr(f"[i] 会话已导出: {session_path}")
+        # 提速: 成功路径下先关浏览器再收尾(diagnostics.finish 只写文件, 无需页面存活)
+        if sms_sent:
+            try:
+                await ctx.close()
+                pr("[i] 浏览器已关闭(短信已确认, 收尾与收码并行)")
+            except Exception:
+                pass
         await diagnostics.finish("stage1_done", f"sms_sent={sms_sent}")
         log_run("stage1_done", f"sms_sent={sms_sent} session={session_path.name}")
         dump_netlog()
