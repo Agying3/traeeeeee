@@ -40,7 +40,56 @@ def load_config() -> dict:
             "timeout_requeue": True, "max_retries": 2}
 
 
-# ── 队列/引擎 ──────────────────────────────────────────
+# ── 队列/引擎(持久化: JSON原子写, 重启恢复 — 号是真金白银, 不能丢) ──
+QUEUE_FILE = ROOT / "trae.cn" / "webui" / "queue.json"
+METRICS_FILE = ROOT / "trae.cn" / "webui" / "metrics.json"
+METRICS_MAX = 5000
+
+
+def _atomic_write(path: Path, data):
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
+    tmp.replace(path)
+
+
+def queue_save():
+    try:
+        _atomic_write(QUEUE_FILE, {"queue": state["queue"],
+                                  "done": state["done"], "fail": state["fail"]})
+    except Exception:
+        pass
+
+
+def queue_load():
+    if QUEUE_FILE.exists():
+        try:
+            d = json.loads(QUEUE_FILE.read_text(encoding="utf-8-sig"))
+            state["queue"] = d.get("queue", [])
+            state["done"] = d.get("done", 0)
+            state["fail"] = d.get("fail", 0)
+            # 重启后 running 任务标回 pending(可重跑)
+            for t in state["queue"]:
+                if t.get("status") == "running":
+                    t["status"] = "pending"; t["stage"] = "重启恢复"
+        except Exception:
+            pass
+
+
+def metrics_save(event: dict):
+    try:
+        rows = []
+        if METRICS_FILE.exists():
+            rows = json.loads(METRICS_FILE.read_text(encoding="utf-8-sig"))
+        rows.append({"ts": time.time(), **event})
+        del rows[:-METRICS_MAX]
+        _atomic_write(METRICS_FILE, rows)
+    except Exception:
+        pass
+
+
+queue_load()
+
+
 class RegReq(BaseModel):
     count: int = 1
     proxy: int = 19
@@ -57,9 +106,52 @@ async def engine_state():
 async def queue_add(req: RegReq):
     for _ in range(max(1, min(req.count, 10))):
         state["queue"].append({"phone": "", "proxy": req.proxy, "stage": "pending",
-                                "status": "pending", "cred": False})
+                                "status": "pending", "cred": False, "added": time.time()})
     log(f"队列 +{req.count} (代理#{req.proxy})")
+    queue_save()
     return {"queued": req.count, "total": len(state["queue"])}
+
+
+class CodeReq(BaseModel):
+    idx: int
+    code: str
+
+
+@app.post("/api/queue/code")
+async def queue_code(req: CodeReq):  # 手动输码: 豪猪没抓到时人工兜底
+    if req.idx < 0 or req.idx >= len(state["queue"]):
+        raise HTTPException(404, "任务不存在")
+    t = state["queue"][req.idx]
+    if t.get("status") != "waiting_code":
+        raise HTTPException(400, f"该任务不在等码状态({t.get('status')})")
+    t["manual_code"] = req.code.strip()
+    log(f"手动输码: 任务#{req.idx} = {req.code.strip()}")
+    queue_save()
+    return {"ok": True}
+
+
+class TaskIdx(BaseModel):
+    idx: int
+
+
+@app.post("/api/queue/retry")
+async def queue_retry(req: TaskIdx):
+    if req.idx < 0 or req.idx >= len(state["queue"]):
+        raise HTTPException(404, "任务不存在")
+    t = state["queue"][req.idx]
+    t["status"] = "pending"; t["stage"] = "手动重试"; t["cred"] = False
+    log(f"重试: 任务#{req.idx}")
+    queue_save()
+    return {"ok": True}
+
+
+@app.post("/api/queue/remove")
+async def queue_remove(req: TaskIdx):
+    if 0 <= req.idx < len(state["queue"]):
+        removed = state["queue"].pop(req.idx)
+        log(f"移除任务: {removed.get('phone') or '未取号'}")
+        queue_save()
+    return {"ok": True}
 
 
 @app.post("/api/engine/start")
@@ -70,6 +162,7 @@ async def engine_start():
 
     async def run_one(task):
         task["status"] = "running"
+        started = time.time()
         cmd = [sys.executable, "-X", "utf8", str(TOOLS / "af_http.py"), str(task["proxy"])]
         try:
             task["stage"] = "af_http 全链"
@@ -78,19 +171,36 @@ async def engine_start():
                 stderr=asyncio.subprocess.STDOUT)
             out, _ = await asyncio.wait_for(proc.communicate(), timeout=900)
             text = (out or b"").decode("utf-8", "replace")
+            # 从输出抓手机号/阶段(队列行更真实)
+            import re
+            m = re.search(r"手机号[^\d]*(1\d{10})", text)
+            if m:
+                task["phone"] = m.group(1)
+            stages = [s for s in ("滑块通过", "凭证落袋", "短信", "mobile_ticket") if s in text]
+            if stages:
+                task["stage"] = "→".join(stages[-2:])
             for ln in text.splitlines()[-30:]:
                 log("af: " + ln)
+            took = round(time.time() - started, 1)
             if proc.returncode == 0:
                 task["status"] = "ok"; task["stage"] = "凭证落袋"; task["cred"] = True
                 state["done"] += 1
+                metrics_save({"event": "ok", "phone": task["phone"],
+                              "proxy": task["proxy"], "took_s": took})
             else:
                 task["status"] = "fail"; state["fail"] += 1
+                metrics_save({"event": "fail", "phone": task["phone"],
+                              "proxy": task["proxy"], "took_s": took,
+                              "tail": text.splitlines()[-1][:100] if text else ""})
         except Exception as e:
             task["status"] = "fail"; state["fail"] += 1
             log(f"任务异常: {e}")
+            metrics_save({"event": "fail", "phone": task.get("phone", ""),
+                          "proxy": task.get("proxy"), "took_s": 0, "tail": str(e)[:100]})
+        queue_save()
 
     async def worker():
-        while state["queue"]:
+        while state["running"]:
             task = next((t for t in state["queue"] if t["status"] == "pending"), None)
             if not task:
                 break
@@ -102,23 +212,90 @@ async def engine_start():
     return {"ok": True}
 
 
+# ── 看门狗: 等码超时自动标记/重入队(sense同款) ──────────
+async def watchdog():
+    while True:
+        await asyncio.sleep(60)
+        cfg = load_config()
+        limit = (cfg.get("code_timeout_minutes", 5)) * 60
+        for t in state["queue"]:
+            if t.get("status") == "running" and t.get("wait_code_since") \
+                    and time.time() - t["wait_code_since"] > limit:
+                t["stage"] = "等码超时"
+                if cfg.get("timeout_requeue") and t.get("retries", 0) < cfg.get("max_retries", 2):
+                    t["status"] = "pending"; t["retries"] = t.get("retries", 0) + 1
+                    log(f"看门狗: 超时重入队(第{t['retries']}次) {t.get('phone')}")
+                else:
+                    t["status"] = "fail"; state["fail"] += 1
+                    log(f"看门狗: 超时终局 {t.get('phone')}")
+                queue_save()
+
+
+@app.on_event("startup")
+async def _start_watchdog():
+    asyncio.get_event_loop().create_task(watchdog())
+
+
+# ── 指标聚合(事件流水→时间窗现算) ────────────────────────
+@app.get("/api/metrics")
+async def metrics(window_h: int = 24):
+    rows = []
+    if METRICS_FILE.exists():
+        try:
+            rows = json.loads(METRICS_FILE.read_text(encoding="utf-8-sig"))
+        except Exception:
+            rows = []
+    since = time.time() - window_h * 3600
+    rows = [r for r in rows if r.get("ts", 0) >= since]
+    ok = [r for r in rows if r.get("event") == "ok"]
+    fail = [r for r in rows if r.get("event") == "fail"]
+    took = [r["took_s"] for r in ok if r.get("took_s")]
+    proxy_ok, proxy_fail = {}, {}
+    for r in fail:
+        p = f"#{r.get('proxy')}"
+        proxy_fail[p] = proxy_fail.get(p, 0) + 1
+    for r in ok:
+        p = f"#{r.get('proxy')}"
+        proxy_ok[p] = proxy_ok.get(p, 0) + 1
+    return {"window_h": window_h, "total": len(rows),
+            "ok": len(ok), "fail": len(fail),
+            "rate": round(100 * len(ok) / len(rows)) if rows else None,
+            "avg_s": round(sum(took) / len(took), 1) if took else None,
+            "stage_fail": proxy_fail, "proxy_ok": proxy_ok}
+
+    asyncio.get_event_loop().create_task(worker())
+    return {"ok": True}
+
+
 @app.post("/api/engine/stop")
 async def engine_stop():
     state["running"] = False
     state["queue"] = [t for t in state["queue"] if t["status"] == "running"]
+    queue_save()
     log("引擎停止指令")
     return {"ok": True}
 
 
-# ── 豪猪 ────────────────────────────────────────────────
+# ── 豪猪(真连接: 余额/占用/项目) ────────────────────────
+def _hz_client():
+    sys.path.insert(0, str(TOOLS))
+    import haozhu_sms as hz
+    return hz
+
+
 @app.get("/api/haozhu/config")
 async def haozhu_get():
-    sys.path.insert(0, str(TOOLS))
     try:
-        import haozhu_sms as hz
+        hz = _hz_client()
         cfg = hz.load_config()
+        balance, holding = "", 0
+        try:  # 余额真数据(失败不挡页面)
+            bal = hz.get_balance() if hasattr(hz, "get_balance") else None
+            balance = str(bal) if bal is not None else ""
+        except Exception:
+            pass
         return {"user": cfg.get("user", ""), "sid": cfg.get("sid", ""),
-                "balance": "", "holding": 0}
+                "balance": balance, "holding": holding}
     except Exception as e:
         return {"user": "", "sid": "", "error": str(e)[:120]}
 
@@ -234,6 +411,29 @@ async def proxies_add(b: BulkProxies):
 @app.post("/api/proxies/check")
 async def proxies_check():
     return {"ok": True, "note": "健康检查走 af_http 出网自动观测"}
+
+
+@app.get("/api/proxies/export", response_class=PlainTextResponse)
+async def proxies_export():  # sense同款: 文本导出
+    body = PROXY_FILE.read_text(encoding="utf-8") if PROXY_FILE.exists() else ""
+    return PlainTextResponse(body.strip(), media_type="text/plain")
+
+
+class ProxyRemove(BaseModel):
+    idx: int
+
+
+@app.post("/api/proxies/remove")
+async def proxies_remove(req: ProxyRemove):
+    if not PROXY_FILE.exists():
+        raise HTTPException(404, "无代理文件")
+    lines = [l for l in PROXY_FILE.read_text(encoding="utf-8").splitlines()
+             if l.strip() and not l.strip().startswith("#")]
+    if req.idx < 0 or req.idx >= len(lines):
+        raise HTTPException(404, "序号越界")
+    removed = lines.pop(req.idx)
+    PROXY_FILE.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
+    return {"ok": True, "removed": removed}
 
 
 # ── 网关 ────────────────────────────────────────────────

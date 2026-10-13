@@ -72,6 +72,7 @@
     <button data-page="haozhu">豪猪接码</button>
     <button data-page="accounts">凭证库</button>
     <button data-page="proxy-page">代理池</button>
+    <button data-page="metrics-page">指标</button>
     <button data-page="gateway">网关</button>
     <button data-page="settings">设置</button>
     <button data-page="logs-page">日志</button>
@@ -115,6 +116,32 @@
         </tr></thead>
         <tbody id="queue-body"><tr><td colspan="6" style="color:var(--muted)">空</td></tr></tbody>
       </table>
+    </div>
+  </section>
+
+  <!-- ── 指标 ─────────────────────────────────────────── -->
+  <section class="page" id="metrics-page">
+    <h1>指标</h1>
+    <p class="lead">时间窗聚合（事件流水 metrics.json，上限 5000 条）</p>
+    <div class="row" style="margin-bottom:16px;">
+      <label>时间窗
+        <select id="metrics-window">
+          <option value="1">1 小时</option>
+          <option value="24" selected>24 小时</option>
+          <option value="168">7 天</option>
+        </select>
+      </label>
+    </div>
+    <div class="metrics-row" id="metrics-row"></div>
+    <div class="grid cols-2">
+      <div class="card">
+        <h2>失败分布（按代理）</h2>
+        <div id="metrics-fail" style="color:var(--muted)">暂无数据</div>
+      </div>
+      <div class="card">
+        <h2>成功分布（按代理）</h2>
+        <div id="metrics-ok" style="color:var(--muted)">暂无数据</div>
+      </div>
     </div>
   </section>
 
@@ -182,6 +209,7 @@
       <h2>列表</h2>
       <div class="row" style="margin-bottom:12px;">
         <button id="btn-proxy-check" class="secondary">健康检查</button>
+        <button id="btn-proxy-export" class="secondary">导出</button>
       </div>
       <table>
         <thead><tr><th>#</th><th>代理</th><th>状态</th><th>累计使用</th></tr></thead>
@@ -291,13 +319,35 @@ async function loadWork() {
     ]);
     $('engine-state').textContent = s.running ? '运行中' : '未启动';
     const tb = $('queue-body');
-    tb.innerHTML = q.length ? q.map(t => `<tr>
+    tb.innerHTML = q.length ? q.map((t, i) => {
+      const acts = [];
+      if (t.status === 'waiting_code')
+        acts.push(`<input class="code" data-i="${i}" placeholder="输码">` +
+                  `<button class="secondary" data-code="${i}">续</button>`);
+      if (t.status === 'fail' || t.status === 'ok')
+        acts.push(`<button class="secondary" data-retry="${i}">重试</button>`);
+      acts.push(`<button class="danger" data-rm="${i}">移除</button>`);
+      return `<tr>
       <td>${t.phone || '—'}</td><td>#${t.proxy ?? '—'}</td>
       <td>${t.stage || '—'}</td>
       <td><span class="tag ${t.status === 'running' ? 'run' : t.status === 'ok' ? 'ok' : t.status === 'fail' ? 'bad' : 'wait'}">${t.status || 'pending'}</span></td>
       <td>${t.cred ? '★' : ''}</td>
-      <td></td></tr>`).join('')
-      : '<tr><td colspan="6" style="color:var(--muted)">空</td></tr>';
+      <td>${acts.join(' ')}</td></tr>`;
+    }).join('') : '<tr><td colspan="6" style="color:var(--muted)">空</td></tr>';
+    tb.querySelectorAll('[data-code]').forEach(b => b.onclick = async () => {
+      const i = b.dataset.code, input = tb.querySelector(`.code[data-i="${i}"]`);
+      if (!input.value.trim()) return toast('先填验证码');
+      try { await api('/queue/code', {method:'POST', body: JSON.stringify({idx:+i, code:input.value.trim()})});
+        toast('已提交'); loadWork(); } catch (e) { toast(e.message); }
+    });
+    tb.querySelectorAll('[data-retry]').forEach(b => b.onclick = async () => {
+      try { await api('/queue/retry', {method:'POST', body: JSON.stringify({idx:+b.dataset.retry})});
+        toast('已重排'); loadWork(); } catch (e) { toast(e.message); }
+    });
+    tb.querySelectorAll('[data-rm]').forEach(b => b.onclick = async () => {
+      try { await api('/queue/remove', {method:'POST', body: JSON.stringify({idx:+b.dataset.rm})});
+        loadWork(); } catch (e) { toast(e.message); }
+    });
   } catch (e) { metric($('work-metrics'), [['引擎', '未启动', 'err']]); }
 }
 $('btn-reg-add').onclick = async () => {
@@ -348,9 +398,13 @@ async function loadProxy() {
       ['总数', p.items.length], ['可用', p.items.filter(x => x.ok !== false).length, 'ok'],
       ['失败', p.items.filter(x => x.ok === false).length, 'err']]);
     $('proxy-body').innerHTML = p.items.length ? p.items.map((x, i) => `<tr>
-      <td>${i + 1}</td><td>${x.ip}:${x.port}</td>
+      <td>${i + 1}</td><td>${x.line}</td>
       <td>${x.ok === false ? '<span class="tag bad">失败</span>' : x.ok ? '<span class="tag ok">可用</span>' : '<span class="tag">未测</span>'}</td>
-      <td>${x.used || 0}</td></tr>`).join('') : '<tr><td colspan="4" style="color:var(--muted)">空</td></tr>';
+      <td>${x.used || 0} <button class="danger" data-prm="${i}" style="padding:2px 8px;font-size:12px;">删</button></td></tr>`).join('') : '<tr><td colspan="4" style="color:var(--muted)">空</td></tr>';
+    $('proxy-body').querySelectorAll('[data-prm]').forEach(b => b.onclick = async () => {
+      try { await api('/proxies/remove', {method:'POST', body: JSON.stringify({idx:+b.dataset.prm})});
+        loadProxy(); } catch (e) { toast(e.message); }
+    });
   } catch (e) {}
 }
 $('btn-proxy-import').onclick = async () => {
@@ -358,6 +412,25 @@ $('btn-proxy-import').onclick = async () => {
     toast('导入 ' + r.added + ' 条'); loadProxy();
   } catch (e) { toast(e.message); } };
 $('btn-proxy-check').onclick = async () => { try { await api('/proxies/check', {method:'POST'}); toast('检查完成'); loadProxy(); } catch (e) { toast(e.message); } };
+$('btn-proxy-export').onclick = () => { window.open(API + '/proxies/export'); };
+
+/* ── 指标 ── */
+async function loadMetrics() {
+  try {
+    const m = await api('/metrics?window_h=' + $('metrics-window').value);
+    metric($('metrics-row'), [
+      ['任务', m.total], ['成功', m.ok, 'ok'], ['失败', m.fail, 'err'],
+      ['成功率', m.rate == null ? '—' : m.rate + '%', m.rate >= 80 ? 'ok' : 'err'],
+      ['平均耗时', m.avg_s == null ? '—' : m.avg_s + 's'],
+      ['窗口', m.window_h + 'h'],
+    ]);
+    const fmt = (o) => Object.entries(o).map(([k, v]) =>
+      `<span class="tag ${v > 2 ? 'bad' : ''}" style="margin:2px;">${k}: ${v}</span>`).join('') || '暂无';
+    $('metrics-fail').innerHTML = fmt(m.stage_fail || {});
+    $('metrics-ok').innerHTML = fmt(m.proxy_ok || {});
+  } catch (e) { metric($('metrics-row'), [['指标', '读取失败', 'err']]); }
+}
+$('metrics-window').onchange = loadMetrics;
 
 /* ── 网关 ── */
 async function loadGateway() {
@@ -405,7 +478,8 @@ async function loadLogs() {
 
 /* ── 轮询 ── */
 const loaders = {work: loadWork, haozhu: loadHaozhu, accounts: loadAccounts,
-                 'proxy-page': loadProxy, gateway: loadGateway, settings: loadSettings,
+                 'proxy-page': loadProxy, 'metrics-page': loadMetrics,
+                 gateway: loadGateway, settings: loadSettings,
                  'logs-page': loadLogs};
 function loadCurrent() {
   const cur = document.querySelector('.page.on');
