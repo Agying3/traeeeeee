@@ -1,0 +1,418 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Trae注册机</title>
+<style>
+  :root {
+    --bg:#f4f6f8; --surface:#fff; --ink:#172033; --muted:#667085; --line:#e4e7ec;
+    --accent:#2457d6; --accent-soft:#e8eefc; --ok:#067647; --ok-soft:#e7f6ee;
+    --warn:#b54708; --warn-soft:#fff4e5; --err:#b42318; --err-soft:#feeceb;
+    --shadow:0 1px 2px rgba(16,24,40,.06),0 8px 24px rgba(16,24,40,.04);
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink);
+         font:14px/1.5 "Segoe UI",system-ui,sans-serif; }
+  button,input,select,textarea { font:inherit; color:inherit; }
+  button { border:0; border-radius:8px; background:var(--accent); color:#fff;
+           padding:8px 14px; cursor:pointer; }
+  button.secondary { background:#fff; color:var(--ink); border:1px solid var(--line); }
+  button.danger { background:#fff; color:var(--err); border:1px solid #f3c3bf; }
+  button:disabled { opacity:.45; cursor:not-allowed; }
+  input,select,textarea { width:100%; border:1px solid var(--line); border-radius:8px;
+                          background:#fff; padding:8px 10px; }
+  textarea { min-height:96px; resize:vertical; font-family:Consolas,monospace; }
+  label small { display:block; color:var(--muted); margin-bottom:5px; }
+  .app { display:grid; grid-template-columns:220px 1fr; min-height:100vh; }
+  aside { background:#111827; color:#d0d5dd; padding:22px 14px; }
+  aside strong { display:block; color:#fff; font-size:18px; margin:0 14px 22px; }
+  aside button { display:block; width:100%; text-align:left; background:transparent;
+                 color:#d0d5dd; margin-bottom:4px; }
+  aside button.on { background:#1f2937; color:#fff; }
+  main { padding:28px 32px 48px; max-width:1180px; }
+  .page { display:none; } .page.on { display:block; }
+  h1 { font-size:24px; margin:0 0 6px; } .lead { color:var(--muted); margin:0 0 22px; }
+  .grid { display:grid; gap:16px; }
+  .cols-2 { grid-template-columns:1.2fr .8fr; }
+  .cols-4 { grid-template-columns:repeat(4,1fr); }
+  .card { background:var(--surface); border:1px solid var(--line); border-radius:14px;
+          box-shadow:var(--shadow); padding:18px; }
+  .card h2 { font-size:16px; margin:0 0 14px; }
+  .metrics-row { display:grid; grid-template-columns:repeat(6,1fr); gap:12px; margin-bottom:16px; }
+  .metric { background:var(--surface); border:1px solid var(--line); border-radius:12px;
+            padding:12px 14px; }
+  .metric small { color:var(--muted); }
+  .metric b { display:block; font-size:22px; margin-top:2px; }
+  .metric b.ok { color:var(--ok); } .metric b.err { color:var(--err); }
+  .row { display:flex; gap:10px; align-items:end; } .row > * { flex:1; }
+  .row button { flex:0 0 auto; }
+  table { width:100%; border-collapse:collapse; }
+  th { text-align:left; color:var(--muted); font-weight:600; font-size:12px;
+       padding:8px; border-bottom:1px solid var(--line); }
+  td { padding:10px 8px; border-bottom:1px solid #f0f2f5; vertical-align:middle; }
+  .tag { display:inline-flex; border-radius:99px; padding:2px 8px; font-size:12px;
+         background:#f2f4f7; color:#475467; }
+  .tag.run { background:var(--accent-soft); color:var(--accent); }
+  .tag.wait { background:var(--warn-soft); color:var(--warn); }
+  .tag.ok { background:var(--ok-soft); color:var(--ok); }
+  .tag.bad { background:var(--err-soft); color:var(--err); }
+  .logs { height:320px; overflow:auto; background:#101828; color:#d0d5dd;
+          border-radius:10px; padding:12px; font:12px/1.7 Consolas,monospace; }
+  #toast { position:fixed; right:24px; bottom:24px; z-index:9; display:none;
+           background:#111827; color:#fff; border-radius:10px; padding:10px 16px;
+           box-shadow:var(--shadow); max-width:420px; }
+</style>
+</head>
+<body>
+<div class="app">
+  <aside>
+    <strong>Trae注册机</strong>
+    <button class="on" data-page="work">工作台</button>
+    <button data-page="haozhu">豪猪接码</button>
+    <button data-page="accounts">凭证库</button>
+    <button data-page="proxy-page">代理池</button>
+    <button data-page="gateway">网关</button>
+    <button data-page="settings">设置</button>
+    <button data-page="logs-page">日志</button>
+  </aside>
+  <main>
+
+  <!-- ── 工作台 ─────────────────────────────────────── -->
+  <section class="page on" id="work">
+    <h1>工作台</h1>
+    <p class="lead">注册队列：豪猪取号 → 养fp → 发码 → 滑块 → 收码 → 登录换证 → 凭证入库</p>
+    <div class="metrics-row" id="work-metrics"></div>
+    <div class="grid cols-2">
+      <div class="card">
+        <h2>添加注册任务</h2>
+        <div class="row">
+          <label>数量
+            <input id="reg-count" type="number" value="1" min="1" max="10">
+          </label>
+          <label>代理序号
+            <input id="reg-proxy" type="number" value="19" placeholder="19">
+          </label>
+          <button id="btn-reg-add">加入队列</button>
+        </div>
+        <p style="color:var(--muted);margin:10px 0 0;">
+          铁律：纯HTTP，浏览器仅滑块拖动；每号换指纹+换IP</p>
+      </div>
+      <div class="card">
+        <h2>引擎</h2>
+        <div class="row">
+          <button id="btn-engine-start">启动</button>
+          <button id="btn-engine-stop" class="danger">停止</button>
+        </div>
+        <div id="engine-state" style="margin-top:10px;color:var(--muted);">未启动</div>
+      </div>
+    </div>
+    <div class="card" style="margin-top:16px;">
+      <h2>队列</h2>
+      <table>
+        <thead><tr>
+          <th>手机号</th><th>代理</th><th>阶段</th><th>状态</th><th>凭证</th><th>操作</th>
+        </tr></thead>
+        <tbody id="queue-body"><tr><td colspan="6" style="color:var(--muted)">空</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ── 豪猪接码 ───────────────────────────────────── -->
+  <section class="page" id="haozhu">
+    <h1>豪猪接码</h1>
+    <p class="lead">取号与收码的账号配置（凭据只存本机 data/）</p>
+    <div class="metrics-row" id="haozhu-metrics"></div>
+    <div class="grid cols-2">
+      <div class="card">
+        <h2>鉴权</h2>
+        <label>豪猪账号
+          <input id="hz-user" placeholder="账号">
+        </label>
+        <label style="margin-top:10px;">密码 / Token
+          <input id="hz-pass" type="password" placeholder="密码或 token">
+        </label>
+        <label style="margin-top:10px;">SID（对接码）
+          <input id="hz-sid" placeholder="58562">
+        </label>
+        <button id="btn-hz-save" style="margin-top:12px;">保存</button>
+      </div>
+      <div class="card">
+        <h2>项目</h2>
+        <label>项目关键词
+          <input id="hz-proj-key" placeholder="Trae">
+        </label>
+        <button id="btn-hz-search" class="secondary" style="margin-top:12px;">搜索项目</button>
+        <div id="hz-projects" style="margin-top:12px;"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── 凭证库 ─────────────────────────────────────── -->
+  <section class="page" id="accounts">
+    <h1>凭证库</h1>
+    <p class="lead">注册产出的 agent2api 格式凭证</p>
+    <div class="metrics-row" id="acc-metrics"></div>
+    <div class="card">
+      <h2>凭证</h2>
+      <div class="row" style="margin-bottom:12px;">
+        <button id="btn-acc-import-gw">导入网关(3065)</button>
+        <button id="btn-acc-export" class="secondary">导出JSON</button>
+      </div>
+      <table>
+        <thead><tr>
+          <th>手机号</th><th>uid</th><th>有效期</th><th>积分</th><th>状态</th><th>网关</th>
+        </tr></thead>
+        <tbody id="acc-body"><tr><td colspan="6" style="color:var(--muted)">空</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ── 代理池 ─────────────────────────────────────── -->
+  <section class="page" id="proxy-page">
+    <h1>代理池</h1>
+    <p class="lead">注册链出网代理（每号换IP）</p>
+    <div class="metrics-row" id="proxy-metrics"></div>
+    <div class="card">
+      <h2>批量导入</h2>
+      <textarea id="proxy-bulk" placeholder="ip:port:user:pass 每行一条"></textarea>
+      <button id="btn-proxy-import" style="margin-top:10px;">导入</button>
+    </div>
+    <div class="card" style="margin-top:16px;">
+      <h2>列表</h2>
+      <div class="row" style="margin-bottom:12px;">
+        <button id="btn-proxy-check" class="secondary">健康检查</button>
+      </div>
+      <table>
+        <thead><tr><th>#</th><th>代理</th><th>状态</th><th>累计使用</th></tr></thead>
+        <tbody id="proxy-body"><tr><td colspan="4" style="color:var(--muted)">空</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ── 网关 ───────────────────────────────────────── -->
+  <section class="page" id="gateway">
+    <h1>网关</h1>
+    <p class="lead">agent2api headless 网关（3065，零GUI）</p>
+    <div class="metrics-row" id="gw-metrics"></div>
+    <div class="grid cols-2">
+      <div class="card">
+        <h2>状态</h2>
+        <div id="gw-state" style="color:var(--muted)">检测中…</div>
+        <div class="row" style="margin-top:12px;">
+          <button id="btn-gw-start">启动</button>
+          <button id="btn-gw-refresh" class="secondary">刷新</button>
+        </div>
+        <div style="margin-top:12px;color:var(--muted);font-size:12px;">
+          OpenAI 兼容: <code>http://127.0.0.1:3065/v1</code>
+        </div>
+      </div>
+      <div class="card">
+        <h2>网关账号 / 模型</h2>
+        <div id="gw-accounts" style="margin-bottom:10px;"></div>
+        <div id="gw-models" style="color:var(--muted)"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── 设置 ───────────────────────────────────────── -->
+  <section class="page" id="settings">
+    <h1>设置</h1>
+    <p class="lead">引擎行为（config.json 热更新）</p>
+    <div class="grid cols-2">
+      <div class="card">
+        <h2>并发与超时</h2>
+        <label>Worker 并发
+          <input id="set-workers" type="number" value="1" min="1" max="5">
+        </label>
+        <label style="margin-top:10px;">等码超时（分钟）
+          <input id="set-code-timeout" type="number" value="5" min="1">
+        </label>
+        <label style="margin-top:10px;">滑块重试
+          <input id="set-slider-retry" type="number" value="2" min="0">
+        </label>
+      </div>
+      <div class="card">
+        <h2>治理</h2>
+        <label>自动重试
+          <select id="set-retry"><option value="1">开</option><option value="0">关</option></select>
+        </label>
+        <label style="margin-top:10px;">最大重试次数
+          <input id="set-max-retry" type="number" value="2" min="0">
+        </label>
+        <button id="btn-set-save" style="margin-top:12px;">保存</button>
+      </div>
+    </div>
+  </section>
+
+  <section class="page" id="logs-page">
+    <h1>日志</h1>
+    <p class="lead">引擎与网关运行日志（最近 500 行）</p>
+    <div class="card"><div class="logs" id="logs"></div></div>
+  </section>
+
+  </main>
+</div>
+<div id="toast"></div>
+<script>
+const $ = (id) => document.getElementById(id);
+const API = location.origin + '/api';
+
+function toast(msg) {
+  const t = $('toast'); t.textContent = msg; t.style.display = 'block';
+  setTimeout(() => t.style.display = 'none', 2600);
+}
+async function api(path, opts) {
+  const r = await fetch(API + path, Object.assign({headers:{'content-type':'application/json'}}, opts));
+  if (!r.ok) throw new Error((await r.text()).slice(0, 200));
+  return r.json();
+}
+function metric(el, items) {
+  el.innerHTML = items.map(([k, v, cls]) =>
+    `<div class="metric"><small>${k}</small><b class="${cls||''}">${v}</b></div>`).join('');
+}
+
+/* ── 导航 ── */
+document.querySelectorAll('aside button').forEach(b => b.onclick = () => {
+  document.querySelectorAll('aside button').forEach(x => x.classList.toggle('on', x === b));
+  document.querySelectorAll('.page').forEach(p => p.classList.toggle('on', p.id === b.dataset.page));
+});
+
+/* ── 工作台 ── */
+async function loadWork() {
+  try {
+    const s = await api('/engine/state');
+    const q = s.queue || [];
+    metric($('work-metrics'), [
+      ['队列', q.length], ['进行中', q.filter(t => t.status === 'running').length],
+      ['成功', s.done || 0, 'ok'], ['失败', s.fail || 0, 'err'],
+      ['成功率', s.done + s.fail ? Math.round(100 * s.done / (s.done + s.fail)) + '%' : '—'],
+      ['凭证', s.creds || 0, 'ok'],
+    ]);
+    $('engine-state').textContent = s.running ? '运行中' : '未启动';
+    const tb = $('queue-body');
+    tb.innerHTML = q.length ? q.map(t => `<tr>
+      <td>${t.phone || '—'}</td><td>#${t.proxy ?? '—'}</td>
+      <td>${t.stage || '—'}</td>
+      <td><span class="tag ${t.status === 'running' ? 'run' : t.status === 'ok' ? 'ok' : t.status === 'fail' ? 'bad' : 'wait'}">${t.status || 'pending'}</span></td>
+      <td>${t.cred ? '★' : ''}</td>
+      <td></td></tr>`).join('')
+      : '<tr><td colspan="6" style="color:var(--muted)">空</td></tr>';
+  } catch (e) { metric($('work-metrics'), [['引擎', '未启动', 'err']]); }
+}
+$('btn-reg-add').onclick = async () => {
+  try {
+    await api('/queue', {method: 'POST', body: JSON.stringify({
+      count: +$('reg-count').value || 1, proxy: +$('reg-proxy').value || 19})});
+    toast('已加入队列'); loadWork();
+  } catch (e) { toast('失败: ' + e.message); }
+};
+$('btn-engine-start').onclick = async () => { try { await api('/engine/start', {method:'POST'}); toast('引擎启动'); loadWork(); } catch (e) { toast(e.message); } };
+$('btn-engine-stop').onclick = async () => { try { await api('/engine/stop', {method:'POST'}); toast('引擎停止'); loadWork(); } catch (e) { toast(e.message); } };
+
+/* ── 豪猪 ── */
+async function loadHaozhu() {
+  try {
+    const c = await api('/haozhu/config');
+    $('hz-user').value = c.user || ''; $('hz-pass').value = ''; $('hz-sid').value = c.sid || '';
+    metric($('haozhu-metrics'), [['余额', c.balance ?? '—'], ['占用号', c.holding ?? 0]]);
+  } catch (e) {}
+}
+$('btn-hz-save').onclick = async () => {
+  try { await api('/haozhu/config', {method: 'POST', body: JSON.stringify({
+    user: $('hz-user').value, pass: $('hz-pass').value, sid: $('hz-sid').value})});
+    toast('豪猪配置已保存'); loadHaozhu();
+  } catch (e) { toast(e.message); }
+};
+
+/* ── 凭证库 ── */
+async function loadAccounts() {
+  try {
+    const a = await api('/credentials');
+    metric($('acc-metrics'), [['凭证总数', a.items.length], ['已入网关', a.in_gateway]]);
+    $('acc-body').innerHTML = a.items.length ? a.items.map(c => `<tr>
+      <td>${c.phone}</td><td>${c.uid}</td><td>${c.expires}</td>
+      <td>${c.credits ?? '—'}</td><td><span class="tag ok">${c.status || 'valid'}</span></td>
+      <td>${c.in_gateway ? '<span class="tag ok">在库</span>' : '<span class="tag">未导</span>'}</td>
+      </tr>`).join('') : '<tr><td colspan="6" style="color:var(--muted)">空</td></tr>';
+  } catch (e) {}
+}
+$('btn-acc-import-gw').onclick = async () => { try { const r = await api('/credentials/import-gateway', {method:'POST'}); toast(r.imported + ' 个凭证已导入网关'); loadAccounts(); } catch (e) { toast(e.message); } };
+$('btn-acc-export').onclick = () => { window.open(API + '/credentials/export'); };
+
+/* ── 代理池 ── */
+async function loadProxy() {
+  try {
+    const p = await api('/proxies');
+    metric($('proxy-metrics'), [
+      ['总数', p.items.length], ['可用', p.items.filter(x => x.ok !== false).length, 'ok'],
+      ['失败', p.items.filter(x => x.ok === false).length, 'err']]);
+    $('proxy-body').innerHTML = p.items.length ? p.items.map((x, i) => `<tr>
+      <td>${i + 1}</td><td>${x.ip}:${x.port}</td>
+      <td>${x.ok === false ? '<span class="tag bad">失败</span>' : x.ok ? '<span class="tag ok">可用</span>' : '<span class="tag">未测</span>'}</td>
+      <td>${x.used || 0}</td></tr>`).join('') : '<tr><td colspan="4" style="color:var(--muted)">空</td></tr>';
+  } catch (e) {}
+}
+$('btn-proxy-import').onclick = async () => {
+  try { const r = await api('/proxies', {method:'POST', body: JSON.stringify({bulk: $('proxy-bulk').value})});
+    toast('导入 ' + r.added + ' 条'); loadProxy();
+  } catch (e) { toast(e.message); } };
+$('btn-proxy-check').onclick = async () => { try { await api('/proxies/check', {method:'POST'}); toast('检查完成'); loadProxy(); } catch (e) { toast(e.message); } };
+
+/* ── 网关 ── */
+async function loadGateway() {
+  try {
+    const g = await api('/gateway/state');
+    metric($('gw-metrics'), [['状态', g.alive ? '运行中' : '停止', g.alive ? 'ok' : 'err'],
+      ['账号', g.accounts], ['模型', g.models]]);
+    $('gw-state').innerHTML = g.alive
+      ? '网关在跑 · <code>http://127.0.0.1:3065/v1</code>'
+      : '未运行 — 点「启动」';
+    $('gw-accounts').innerHTML = (g.account_list || []).map(a =>
+      `<div>${a.provider} ${a.nickname || a.uid} <span class="tag ${a.enabled ? 'ok' : ''}">${a.enabled ? '启用' : '禁用'}</span></div>`).join('') || '无账号';
+    $('gw-models').textContent = (g.model_list || []).slice(0, 8).join(', ') + (g.models > 8 ? ' …' : '');
+  } catch (e) { $('gw-state').textContent = '检测失败'; }
+}
+$('btn-gw-start').onclick = async () => { try { await api('/gateway/start', {method:'POST'}); toast('网关启动中…'); setTimeout(loadGateway, 3000); } catch (e) { toast(e.message); } };
+$('btn-gw-refresh').onclick = loadGateway;
+
+/* ── 设置 ── */
+async function loadSettings() {
+  try {
+    const c = await api('/settings');
+    $('set-workers').value = c.workers ?? 1;
+    $('set-code-timeout').value = c.code_timeout_minutes ?? 5;
+    $('set-slider-retry').value = c.slider_retry ?? 2;
+    $('set-retry').value = c.timeout_requeue ? '1' : '0';
+    $('set-max-retry').value = c.max_retries ?? 2;
+  } catch (e) {}
+}
+$('btn-set-save').onclick = async () => {
+  try { await api('/settings', {method:'POST', body: JSON.stringify({
+    workers: +$('set-workers').value, code_timeout_minutes: +$('set-code-timeout').value,
+    slider_retry: +$('set-slider-retry').value,
+    timeout_requeue: $('set-retry').value === '1', max_retries: +$('set-max-retry').value})});
+    toast('设置已保存'); loadSettings();
+  } catch (e) { toast(e.message); }
+};
+
+/* ── 日志 ── */
+async function loadLogs() {
+  try { const l = await api('/logs');
+    $('logs').textContent = (l.lines || []).join('\n') || '（空）';
+  } catch (e) { $('logs').textContent = '读取失败'; }
+}
+
+/* ── 轮询 ── */
+const loaders = {work: loadWork, haozhu: loadHaozhu, accounts: loadAccounts,
+                 'proxy-page': loadProxy, gateway: loadGateway, settings: loadSettings,
+                 'logs-page': loadLogs};
+function loadCurrent() {
+  const cur = document.querySelector('.page.on');
+  if (cur && loaders[cur.id]) loaders[cur.id]();
+}
+loadCurrent();
+setInterval(loadCurrent, 4000);
+</script>
+</body>
+</html>
