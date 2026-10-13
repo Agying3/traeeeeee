@@ -238,17 +238,26 @@ async def main():
     pr(f"[P2b] slider_url前200: {slider_url[:200]}")
     trace("slider_url", url=slider_url)
 
-    # 同一浏览器导航到滑块页(SDK 前置序列 index.js/collect-base.js/captcha.js 由页面自拉)
-    try:
-        await page.goto(slider_url, wait_until="domcontentloaded", timeout=45000)
-    except Exception as e:
-        pr(f"[P2b] 导航异常: {str(e)[:90]}")
-    await asyncio.sleep(5)
+    # iframe 注入形态学复刻(20:51成功样例): 授权页保持活跃(产品页JS/埋点持续运行,
+    # 风控词典5014条: 拖动期间需要产品页行为信号), 滑块 iframe 从授权页注入并自初始化
+    # — 与 hf3 死例的区别: URL 是逐字节真模板(20:51 events[152]), SDK 前置序列由页面自拉
+    slider_iframe_id = "hf-p2b-slider"
+    await page.evaluate(
+        """(url) => {
+            document.querySelectorAll('#hf-p2b-slider').forEach(e => e.remove());
+            const f = document.createElement('iframe');
+            f.id = 'hf-p2b-slider';
+            f.src = url;
+            f.style.cssText = 'position:fixed;left:30px;top:80px;width:340px;height:420px;'
+                              + 'z-index:99999;border:1px solid #ccc;background:#fff;';
+            document.body.appendChild(f);
+        }""", slider_url)
+    pr("[P2b] iframe已注入授权页(父页保持活跃), 等SDK自渲染...")
+    await asyncio.sleep(6)
 
-    
+    # 等滑块渲染(SDK iframe 内自渲染; 顶层特征词做兜底)
     async def slider_visible():
-        for sel in ('iframe[src*="verifycenter"]', 'text=按住左边按钮', 'text=拖动滑块',
-                    'canvas', '.captcha_container'):
+        for sel in ('#hf-p2b-slider', 'iframe[src*="verifycenter"]', 'text=按住左边按钮'):
             try:
                 if await page.locator(sel).first.is_visible():
                     return True
@@ -256,10 +265,10 @@ async def main():
                 continue
         return False
     if not await diagnostics.wait_for("slider_visible", slider_visible, timeout_s=30):
-        pr("[X] P2b 滑块未渲染 — URL 有误(留痕已存)")
+        pr("[X] P2b 滑块未渲染 — 注入失败(留痕已存)")
         await diagnostics.snapshot("p2b_noslider")
         await ctx.close(); return 1
-    pr("[P2b] ★ 滑块已渲染(SDK自渲染, 零表单) — 拖")
+    pr("[P2b] ★ 滑块已渲染(iframe注入, 授权页活跃, 零表单) — 拖")
 
     # 顶层渲染模式: 无 verifycenter iframe, solve_slider 的 iframe 定位需兼容
     # 真实文案"按住左边按钮拖动完成上方拼图"与 solve_slider 预期一致即可拖
@@ -328,7 +337,81 @@ async def main():
     login_cookies = {c["name"]: c["value"] for c in cookies}
     pr(f"[P4] ★ 登录cookie在浏览器jar里: {len(cookies)}个(含sessionid={('sessionid' in login_cookies)})")
 
-    # ── 阶段5: 纯HTTP GetPCAuthCode → ExchangeToken → 导出(发现②: 参数全自知) ──
+    
+    # 样例: POST api.trae.cn/cloudide/api/v3/trae/Login?type=sms&msToken=<页面msToken>&a_bogus=...
+    # body: {UtmSource:"",...,LoginChannel:"native_ide",LoginPlatform:"solo"}
+    # msToken 从页面 window 取(byted_acrawler/webmssdk 惯例); a_bogus 由页内 SDK 生成
+    # → 页内 fetch 执行, 让页面的签名 SDK 自动补齐(零表单, 上下文请求)
+    pr("[P4.5] 页内 fetch cloudide Login(种 X-Cloudide-Session)...")
+    try:
+        r_login = await page.evaluate(
+            """async () => {
+              // msToken: 页面全局变量(字节系 webmssdk 惯例), 找不到就从 cookie/URL 里捞
+              let ms = window.msToken || '';
+              if (!ms) { try { ms = window.byted_acrawler && window.byted_acrawler.getConfig
+                        && window.byted_acrawler.getConfig().msToken || ''; } catch(e) {} }
+              if (!ms) { const m = document.cookie.match(/msToken=([^;]+)/); ms = m ? m[1] : ''; }
+              const body = {UtmSource:"",UtmMedium:"",UtmCampaign:"",UtmTerm:"",UtmContent:"",
+                            BDVID:"",ActivityName:"",LandingPageUrl:"",extYoudao:"",
+                            LoginChannel:"native_ide",LoginPlatform:"solo"};
+              let url = 'https://api.trae.cn/cloudide/api/v3/trae/Login?type=sms';
+              if (ms) url += '&msToken=' + encodeURIComponent(ms);
+              const r = await fetch(url, {method:'POST', credentials:'include',
+                headers:{'content-type':'application/json'},
+                body: JSON.stringify(body)});
+              return {msToken: ms ? ms.slice(0,20) : '(未找到)', status: r.status,
+                      resp: await r.text()};
+            }""")
+        pr(f"[P4.5] cloudide Login: msToken={r_login.get('msToken')} "
+           f"HTTP={r_login.get('status')} resp={str(r_login.get('resp'))[:110]}")
+        trace("cloudide_login", body=str(r_login)[:1500])
+    except Exception as e:
+        pr(f"[P4.5] cloudide Login 异常: {str(e)[:130]}")
+    # 等 Set-Cookie 生效 + 授权页刷新（Login 后重新加载授权页以接续登录状态）
+    await asyncio.sleep(2)
+    try:
+        await page.goto(auth_url, wait_until="domcontentloaded", timeout=WAIT_SECONDS * 1000)
+    except Exception as e:
+        pr(f"[P4.5] 授权页刷新: {str(e)[:70]}")
+    await asyncio.sleep(6)
+    cookies = await ctx.cookies()
+    has_xcs = any(c["name"] == "X-Cloudide-Session" for c in cookies)
+    pr(f"[P4.5] X-Cloudide-Session={'★有' if has_xcs else '✗无'} cookies={len(cookies)}")
+    trace("p45_cookies", names=[c["name"] for c in cookies])
+    login_cookies = {c["name"]: c["value"] for c in cookies}
+
+    # ── 阶段5: 页内 fetch GetPCAuthCode（复用当前页面上下文） → ExchangeToken → 导出 ──
+    
+    # 样例的请求头只有 referer+content-type(无特殊头), 差异在"请求来自页面"(同源凭证链)
+    # → 改页内 fetch: credentials:include 自动带全部 cookie + 页面上下文
+    pr("[P5] 页内 fetch GetPCAuthCode...")
+    gpc_js_body = json.dumps({
+        "ClientID": lib.client_id_for(args.variant),
+        "CodeChallenge": context.code_challenge,
+        "CodeChallengeMethod": "S256",
+        "DeviceID": context.device_id,
+        "PlatformCode": "SOLO_PC",
+    })
+    auth_code = ""
+    try:
+        r_gpc = await page.evaluate(
+            """async (body) => {
+              const r = await fetch('https://api.trae.cn/cloudide/api/v3/trae/oauth/GetPCAuthCode',
+                {method:'POST', credentials:'include',
+                 headers:{'content-type':'application/json'},
+                 body: body});
+              return {status: r.status, resp: await r.text()};
+            }""", gpc_js_body)
+        pr(f"[P5] 页内GetPCAuthCode: HTTP={r_gpc.get('status')} {str(r_gpc.get('resp'))[:130]}")
+        trace("gpc_inpage", body=str(r_gpc)[:1500])
+        try:
+            j3 = json.loads(r_gpc.get("resp") or "{}")
+            res = j3.get("Result") or j3.get("data") or j3
+            auth_code = res.get("AuthCode") or res.get("authCode") or ""
+        except Exception:
+            pass
+    except Exception as e:
+        pr(f"[P5] 页内GetPCAuthCode异常: {str(e)[:130]}")
     
     # 它由授权页JS调 CheckLogin 后种下 — 注入登录cookie后静开一次授权页收集之
     pr("[P5a] 注入cookie → 静开授权页收集 X-Cloudide-Session...")
@@ -369,30 +452,30 @@ async def main():
     except Exception as e:
         pr(f"[P5a] 页内CheckLogin失败: {str(e)[:80]}")
 
-    pr("[P5b] 纯HTTP GetPCAuthCode...")
+    pr("[P5b] 纯HTTP GetPCAuthCode(页内版失败时的对照)...")
     all_cookies = {c["name"]: c["value"] for c in cookies}
     all_cookies.update(login_cookies)
-    cookie_hdr2 = "; ".join(f"{k}={v}" for k, v in all_cookies.items())
-    gpc_body = json.dumps({
-        "ClientID": lib.client_id_for(args.variant),
-        "CodeChallenge": context.code_challenge,
-        "CodeChallengeMethod": "S256",
-        "DeviceID": context.device_id,
-        "PlatformCode": "SOLO_PC",
-    })
-    gpc_hdrs = {"User-Agent": UA, "Origin": "https://www.trae.cn",
-                "Referer": auth_url[:200], "Cookie": cookie_hdr2,
-                "Content-Type": "application/json"}
-    st, out = curl("POST", "https://api.trae.cn/cloudide/api/v3/trae/oauth/GetPCAuthCode",
-                   idx, gpc_body, gpc_hdrs)
-    pr(f"[P5] GetPCAuthCode HTTP={st} {out[:150]}")
-    auth_code = ""
-    try:
-        j3 = json.loads(out)
-        res = j3.get("Result") or j3.get("data") or j3
-        auth_code = res.get("AuthCode") or res.get("authCode") or ""
-    except Exception:
-        pass
+    if not auth_code:
+        cookie_hdr2 = "; ".join(f"{k}={v}" for k, v in all_cookies.items())
+        gpc_body = json.dumps({
+            "ClientID": lib.client_id_for(args.variant),
+            "CodeChallenge": context.code_challenge,
+            "CodeChallengeMethod": "S256",
+            "DeviceID": context.device_id,
+            "PlatformCode": "SOLO_PC",
+        })
+        gpc_hdrs = {"User-Agent": UA, "Origin": "https://www.trae.cn",
+                    "Referer": auth_url[:200], "Cookie": cookie_hdr2,
+                    "Content-Type": "application/json"}
+        st, out = curl("POST", "https://api.trae.cn/cloudide/api/v3/trae/oauth/GetPCAuthCode",
+                       idx, gpc_body, gpc_hdrs)
+        pr(f"[P5b] GetPCAuthCode HTTP={st} {out[:150]}")
+        try:
+            j3 = json.loads(out)
+            res = j3.get("Result") or j3.get("data") or j3
+            auth_code = res.get("AuthCode") or res.get("authCode") or ""
+        except Exception:
+            pass
     if not auth_code:
         pr("[X] 未拿到 AuthCode — 停(响应留痕在trace, 诊断头/cookie问题)")
         try:
