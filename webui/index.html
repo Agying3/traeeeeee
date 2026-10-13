@@ -92,14 +92,17 @@
                  display:block; font-size:17px; }
   /* 侧栏链接: 外挂 .sidebar-link L296-324 */
   aside button { display:block; width:100%; text-align:left;
-                 background:transparent; border:0; box-shadow:none;
-                 color:#475569; margin-bottom:4px; border-radius:10px; }
-  aside button:hover { background: rgb(249 115 22 / 0.08);
-                       color: var(--luoyv-brand-strong); }
+                 background:transparent; background-image:none; border:0; box-shadow:none;
+                 color:#475569; margin-bottom:4px; border-radius:10px;
+                 font-weight:400; }
+  aside button:hover:not(:disabled) { background: rgb(249 115 22 / 0.08);
+                       background-image:none; color: var(--luoyv-brand-strong);
+                       transform:none; box-shadow:none; }
   aside button.on { border:1px solid rgb(194 65 12 / 0.16);
-                    background: var(--luoyv-active);
-                    color: var(--luoyv-brand-strong);
+                    background: var(--luoyv-active); background-image:var(--luoyv-active);
+                    color: var(--luoyv-brand-strong); font-weight:500;
                     box-shadow: 0 12px 28px rgb(194 65 12 / 0.1); }
+  aside button.on:hover:not(:disabled) { transform:none; }
   main { padding:28px 32px 48px; max-width:1180px; }
   .page { display:none; } .page.on { display:block; }
   h1 { font-size:24px; margin:0 0 6px; } .lead { color:var(--muted); margin:0 0 22px; }
