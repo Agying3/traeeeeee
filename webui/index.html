@@ -5,62 +5,139 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Trae注册机</title>
 <style>
+  /* 主题变量与选择器映射。 */
   :root {
-    --bg:#f4f6f8; --surface:#fff; --ink:#172033; --muted:#667085; --line:#e4e7ec;
-    --accent:#2457d6; --accent-soft:#e8eefc; --ok:#067647; --ok-soft:#e7f6ee;
-    --warn:#b54708; --warn-soft:#fff4e5; --err:#b42318; --err-soft:#feeceb;
-    --shadow:0 1px 2px rgba(16,24,40,.06),0 8px 24px rgba(16,24,40,.04);
+    /* 外挂原文变量(styles.css L1-16) */
+    --luoyv-font: Inter, "HarmonyOS Sans SC", "Microsoft YaHei", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    --luoyv-bg-top: #fff7ed;
+    --luoyv-bg-mid: #f8fafc;
+    --luoyv-bg-bottom: #eef7f4;
+    --luoyv-text: #111827;
+    --luoyv-muted: #64748b;
+    --luoyv-card: rgb(255 255 255 / 0.9);
+    --luoyv-card-border: rgb(194 65 12 / 0.12);
+    --luoyv-card-shadow: 0 16px 44px rgb(15 23 42 / 0.08);
+    --luoyv-brand: #f97316;
+    --luoyv-brand-strong: #c2410c;
+    --luoyv-brand-soft: #ffedd5;
+    --luoyv-warm: #c2410c;
+    --luoyv-active: linear-gradient(135deg, #fff7ed 0%, #ffedd5 48%, #e6f4ef 100%);
+    /* 旧变量映射(旧规则不改也吃到新色) */
+    --bg: var(--luoyv-bg-mid);
+    --surface: var(--luoyv-card);
+    --ink: var(--luoyv-text);
+    --muted: var(--luoyv-muted);
+    --line: rgb(148 163 184 / 0.32);
+    --accent: var(--luoyv-brand-strong);
+    --accent-soft: var(--luoyv-brand-soft);
+    --ok:#059669; --ok-soft:#ecfdf5;
+    --warn:#d97706; --warn-soft:#fffbeb;
+    --err:#dc2626; --err-soft:#fef2f2;
+    --shadow: var(--luoyv-card-shadow);
   }
   * { box-sizing:border-box; }
-  body { margin:0; background:var(--bg); color:var(--ink);
-         font:14px/1.5 "Segoe UI",system-ui,sans-serif; }
+  /* body 三段渐变(外挂 L52) + 字体栈(外挂 L2) */
+  body { margin:0;
+         background: linear-gradient(180deg, var(--luoyv-bg-top) 0%, var(--luoyv-bg-mid) 42%, var(--luoyv-bg-bottom) 100%);
+         color: var(--luoyv-text);
+         font-family: var(--luoyv-font);
+         font-size:14px; line-height:1.5; }
   button,input,select,textarea { font:inherit; color:inherit; }
-  button { border:0; border-radius:8px; background:var(--accent); color:#fff;
-           padding:8px 14px; cursor:pointer; }
-  button.secondary { background:#fff; color:var(--ink); border:1px solid var(--line); }
-  button.danger { background:#fff; color:var(--err); border:1px solid #f3c3bf; }
-  button:disabled { opacity:.45; cursor:not-allowed; }
-  input,select,textarea { width:100%; border:1px solid var(--line); border-radius:8px;
-                          background:#fff; padding:8px 10px; }
+  /* 按钮: 外挂 .btn-primary L387-403, 选择器映射成 button */
+  button { border:0; border-radius:12px;
+           background: linear-gradient(135deg, #f97316, #c2410c);
+           color:#ffffff;
+           box-shadow: 0 14px 32px rgb(194 65 12 / 0.22);
+           padding:10px 16px; cursor:pointer; font-weight:500; font-size:14px;
+           transition: all .2s ease-out; }
+  button:hover:not(:disabled) {
+    background: linear-gradient(135deg, #ea580c, #9a3412);
+    box-shadow: 0 18px 40px rgb(194 65 12 / 0.28);
+    transform: translateY(-1px); }
+  button:active:not(:disabled) { transform: scale(.98); }
+  button:focus-visible { outline:none; box-shadow: 0 0 0 3px rgb(249 115 22 / 0.16); }
+  button:disabled { opacity:.5; cursor:not-allowed; }
+  button.secondary {
+    background: rgba(255 255 255 / .92);
+    color: #475569;
+    border: 1px solid var(--line);
+    box-shadow: 0 8px 18px rgb(15 23 42 / 0.06); }
+  button.secondary:hover:not(:disabled) {
+    background:#fff; color: var(--luoyv-brand-strong);
+    border-color: rgb(194 65 12 / 0.2); }
+  button.danger { background:#fff; color:var(--err); border:1px solid #fecaca; }
+  button.danger:hover:not(:disabled) {
+    background: linear-gradient(135deg, #ef4444, #dc2626);
+    color:#fff; box-shadow: 0 14px 32px rgb(220 38 38 / .25); }
+  /* 输入框: 外挂 L405-418 */
+  input,select,textarea { width:100%; border:1px solid rgb(148 163 184 / 0.32);
+                          border-radius:12px; background:#fff; padding:9px 12px;
+                          transition: all .2s ease-out; }
+  input:focus, select:focus, textarea:focus {
+    border-color: var(--luoyv-brand);
+    box-shadow: 0 0 0 3px rgb(249 115 22 / 0.16);
+    outline:none; }
   textarea { min-height:96px; resize:vertical; font-family:Consolas,monospace; }
   label small { display:block; color:var(--muted); margin-bottom:5px; }
   .app { display:grid; grid-template-columns:220px 1fr; min-height:100vh; }
-  aside { background:#111827; color:#d0d5dd; padding:22px 14px; }
-  aside strong { display:block; color:#fff; font-size:18px; margin:0 14px 22px; }
-  aside button { display:block; width:100%; text-align:left; background:transparent;
-                 color:#d0d5dd; margin-bottom:4px; }
-  aside button.on { background:#1f2937; color:#fff; }
+  /* 侧栏: 外挂 .sidebar L287-331(玻璃白+blur18) */
+  aside { background: rgb(255 255 255 / 0.92);
+          backdrop-filter: blur(18px);
+          color:#334155; padding:22px 14px;
+          border-right:1px solid var(--luoyv-card-border); }
+  /* logo块: 外挂 ku-brand-logo L465-469(墨绿) */
+  aside strong { background:#12231d; color:#ffffff;
+                 box-shadow: 0 10px 30px rgb(18 35 29 / 0.16);
+                 border-radius:10px; padding:10px 14px; margin:0 0 18px;
+                 display:block; font-size:17px; }
+  /* 侧栏链接: 外挂 .sidebar-link L296-324 */
+  aside button { display:block; width:100%; text-align:left;
+                 background:transparent; border:0; box-shadow:none;
+                 color:#475569; margin-bottom:4px; border-radius:10px; }
+  aside button:hover { background: rgb(249 115 22 / 0.08);
+                       color: var(--luoyv-brand-strong); }
+  aside button.on { border:1px solid rgb(194 65 12 / 0.16);
+                    background: var(--luoyv-active);
+                    color: var(--luoyv-brand-strong);
+                    box-shadow: 0 12px 28px rgb(194 65 12 / 0.1); }
   main { padding:28px 32px 48px; max-width:1180px; }
   .page { display:none; } .page.on { display:block; }
   h1 { font-size:24px; margin:0 0 6px; } .lead { color:var(--muted); margin:0 0 22px; }
   .grid { display:grid; gap:16px; }
   .cols-2 { grid-template-columns:1.2fr .8fr; }
   .cols-4 { grid-template-columns:repeat(4,1fr); }
-  .card { background:var(--surface); border:1px solid var(--line); border-radius:14px;
-          box-shadow:var(--shadow); padding:18px; }
+  /* 卡片: 外挂 L355-367 + 圆角收敛 L502-507 */
+  .card { background: var(--luoyv-card);
+          border:1px solid var(--luoyv-card-border);
+          box-shadow: var(--luoyv-card-shadow);
+          border-radius:8px; padding:18px; }
   .card h2 { font-size:16px; margin:0 0 14px; }
   .metrics-row { display:grid; grid-template-columns:repeat(6,1fr); gap:12px; margin-bottom:16px; }
-  .metric { background:var(--surface); border:1px solid var(--line); border-radius:12px;
-            padding:12px 14px; }
+  /* 指标卡: 外挂 console-balance L338-347(橙-暖米-薄荷渐变) */
+  .metric { border:1px solid rgb(194 65 12 / 0.18);
+            background: linear-gradient(135deg, rgb(255 247 237 / 0.98), rgb(255 237 213 / 0.9) 44%, rgb(209 250 229 / 0.94) 100%);
+            box-shadow: 0 12px 30px rgb(194 65 12 / 0.12);
+            border-radius:8px; padding:12px 14px; }
   .metric small { color:var(--muted); }
   .metric b { display:block; font-size:22px; margin-top:2px; }
-  .metric b.ok { color:var(--ok); } .metric b.err { color:var(--err); }
+  .metric b.ok { color: var(--luoyv-brand-strong); } .metric b.err { color:var(--err); }
   .row { display:flex; gap:10px; align-items:end; } .row > * { flex:1; }
   .row button { flex:0 0 auto; }
   table { width:100%; border-collapse:collapse; }
   th { text-align:left; color:var(--muted); font-weight:600; font-size:12px;
        padding:8px; border-bottom:1px solid var(--line); }
   td { padding:10px 8px; border-bottom:1px solid #f0f2f5; vertical-align:middle; }
+  /* 徽章: 外挂 L420-425 */
   .tag { display:inline-flex; border-radius:99px; padding:2px 8px; font-size:12px;
-         background:#f2f4f7; color:#475467; }
-  .tag.run { background:var(--accent-soft); color:var(--accent); }
+         background:#f1f5f9; color:#475467; }
+  .tag.run { background: var(--luoyv-brand-soft); color: var(--luoyv-brand-strong); }
   .tag.wait { background:var(--warn-soft); color:var(--warn); }
   .tag.ok { background:var(--ok-soft); color:var(--ok); }
   .tag.bad { background:var(--err-soft); color:var(--err); }
-  .logs { height:320px; overflow:auto; background:#101828; color:#d0d5dd;
+  .logs { height:320px; overflow:auto; background:#0f172a; color:#cbd5e1;
           border-radius:10px; padding:12px; font:12px/1.7 Consolas,monospace; }
   #toast { position:fixed; right:24px; bottom:24px; z-index:9; display:none;
-           background:#111827; color:#fff; border-radius:10px; padding:10px 16px;
+           background:#12231d; color:#fff; border-radius:10px; padding:10px 16px;
            box-shadow:var(--shadow); max-width:420px; }
 </style>
 </head>
