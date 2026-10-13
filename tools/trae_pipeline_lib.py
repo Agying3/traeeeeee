@@ -613,12 +613,14 @@ CAPTURED_TRACE_ID = ""
 
 
 def sms_login(mobile: str, code: str, cookies: dict, csrf_token: str = None,
-              trace_id: str = None, session: requests.Session = None, trace=None):
+              trace_id: str = None, session: requests.Session = None, trace=None,
+              proxies: dict = None):
     """短信登录(新号自动注册), 纯 HTTP。
 
     - mobile/code: XOR 0x05 hex, mix_mode=1
     - cookies: 浏览器导出的全套(至少含 passport_csrf_token 同源的键)
     - csrf_token/trace_id: 请求头 x-tt-passport-csrf-token / x-tt-passport-trace-id
+    - proxies: 传给 requests 的 proxies dict(代理行号解析后的形态)
     返回 (parsed_json, resp)。message=success 即注册/登录成功。
     """
     session = session or requests.Session()
@@ -636,7 +638,7 @@ def sms_login(mobile: str, code: str, cookies: dict, csrf_token: str = None,
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/203.0.113.1 Safari/537.36",
     }
     resp = session.post(CAPTURED_SMS_LOGIN_URL, data=body, headers=headers, cookies=cookies,
-                        timeout=30)
+                        timeout=30, proxies=proxies)
     if trace is not None:
         trace.append({"t": int(time.time() * 1000), "url": CAPTURED_SMS_LOGIN_URL[:120],
                       "status": resp.status_code, "reqBody": "mobile=<masked>&code=<masked>",

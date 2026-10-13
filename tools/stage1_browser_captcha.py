@@ -104,8 +104,14 @@ async def solve_slider(page, ctx, cdp, diagnostics, max_attempts):
         # 首查哨兵: 拖动后 SDK 重发 send_code success = 短信已发出 = 全部使命完成,
         # 无需再关心 verify 抓包时序(响应体可能抓到空串, 不可靠)
         def sms_already_sent():
-            return any("send_code" in e["url"] and (e.get("body") or "").find('"message":"success"') >= 0
-                       for e in netlog)
+            for e in netlog:
+                if "send_code" not in e["url"] or not e.get("body"):
+                    continue
+                b = e["body"]
+                # 成功形状: message=success 或 有 log_id 且无 error_code
+                if '"message":"success"' in b or ('"log_id"' in b and '"error_code"' not in b):
+                    return True
+            return False
         if sms_already_sent():
             pr("[i] ★ 哨兵: send_code 已 success(短信已发出), 滑块流程提前收工")
             return True, None
@@ -252,11 +258,11 @@ async def solve_slider(page, ctx, cdp, diagnostics, max_attempts):
         passed = '"code":200' in body
         pr(f"[i] 判定: {body[:120] or '(无响应)'} → {'★通过' if passed else '未通过'}")
         await diagnostics.snapshot(f"slider-attempt-{attempt}")
-        if not v:
-            return False, None
         if passed:
             return True, v
-        await page.wait_for_timeout(2500)  # 服务器自动换题, 进入下一次尝试
+        # 无响应(超时) 或 未通过: 等 2.5s 让服务器换题, 继续下一次尝试
+        # (旧逻辑: 无响应直接 return False —— verify 抓包时序不稳时会白白浪费整单)
+        await page.wait_for_timeout(2500)
     return False, None
 
 
