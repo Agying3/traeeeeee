@@ -137,8 +137,19 @@
   .tag.wait { background:var(--warn-soft); color:var(--warn); }
   .tag.ok { background:var(--ok-soft); color:var(--ok); }
   .tag.bad { background:var(--err-soft); color:var(--err); }
-  .logs { height:320px; overflow:auto; background:#0f172a; color:#cbd5e1;
-          border-radius:10px; padding:12px; font:12px/1.7 Consolas,monospace; }
+  /* 日志面板: 外层虚线框(卡片色), 内层与主页面同款三段渐变, 文字鲜明 */
+  .logs { height:320px; overflow:auto;
+          background: linear-gradient(180deg, #fff7ed 0%, #f8fafc 42%, #eef7f4 100%);
+          color:#0f172a;
+          border:2px dashed rgb(194 65 12 / 0.35);
+          border-radius:10px; padding:12px;
+          font:12px/1.7 Consolas,monospace; }
+  /* 流水级别上色(时间灰/普通墨/af引擎蓝绿/警示橙红) — 文字鲜明 */
+  .logs .lt { color:#94a3b8; }              /* 时间戳 */
+  .logs .lok { color:#0f172a; }             /* 普通行 */
+  .logs .laf { color:#7c2d12; font-weight:600; }  /* af: 引擎输出 */
+  .logs .lwarn { color:#c2410c; }           /* 警示 */
+  .logs .lerr { color:#dc2626; font-weight:600; } /* 错误 */
   #toast { position:fixed; right:24px; bottom:24px; z-index:9; display:none;
            background:#12231d; color:#fff; border-radius:10px; padding:10px 16px;
            box-shadow:var(--shadow); max-width:420px; }
@@ -552,8 +563,17 @@ $('btn-set-save').onclick = async () => {
 /* ── 日志 ── */
 async function loadLogs() {
   try { const l = await api('/logs');
-    $('logs').textContent = (l.lines || []).join('\n') || '（空）';
-  } catch (e) { $('logs').textContent = '读取失败'; }
+    $('logs').innerHTML = (l.lines || []).map(ln => {
+      // 级别上色: 时间戳灰, af: 深棕粗, 异常/失败/超时 红, 看门狗/手动 橙
+      let cls = 'lok';
+      if (/^af:/.test(ln)) cls = 'laf';
+      if (/异常|失败|超时|FAIL|✗/i.test(ln)) cls = 'lerr';
+      else if (/看门狗|手动|重试|⚠/i.test(ln)) cls = 'lwarn';
+      const safe = ln.replace(/&/g,'&amp;').replace(/</g,'&lt;')
+                     .replace(/^\[(\d{2}:\d{2}:\d{2})\]/, '<span class="lt">[$1]</span>');
+      return `<div class="${cls}">${safe}</div>`;
+    }).join('') || '<div class="lok">（空）</div>';
+  } catch (e) { $('logs').innerHTML = '<div class="lerr">读取失败</div>'; }
 }
 
 /* ── 轮询 ── */
