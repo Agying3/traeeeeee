@@ -120,6 +120,7 @@ async def solve_slider(page, ctx, cdp, diagnostics, max_attempts):
         async def images_ready():
             nonlocal info, iframe_frame
             for fr in page.frames:
+                # 顶层直航模式: page 主 frame 的 url 就是 verifycenter(P2b), 命中同款判定
                 if "verifycenter" not in (fr.url or ""):
                     continue
                 info = await fr.evaluate("""() => {
@@ -211,8 +212,15 @@ async def solve_slider(page, ctx, cdp, diagnostics, max_attempts):
         pr(f"[i] 轨迹: {len(track)}事件 {sum(t[2] for t in track):.0f}ms 位移{D:.1f}px")
 
         sbb = info["sliderRect"] or {}
-        ibb = await page.locator('iframe[src*="verifycenter"]').first.bounding_box()
-        if not ibb or sbb.get("width", 0) <= 0:
+        # 顶层渲染模式(P2b 直航): 无 verifycenter iframe, 拖动坐标 = iframe框(整页) + slider相对位
+        try:
+            ibb = await page.locator('iframe[src*="verifycenter"]').first.bounding_box()
+        except Exception:
+            ibb = None
+        if not ibb:
+            # 顶层: slider 的 getBoundingClientRect 已是视口绝对坐标, 直接用
+            ibb = {"x": 0, "y": 0}
+        if sbb.get("width", 0) <= 0:
             pr("[!] 布局未就绪")
             return False, None
         sx = ibb["x"] + sbb["x"] + sbb["width"] / 2

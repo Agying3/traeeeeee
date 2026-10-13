@@ -194,26 +194,77 @@ async def main():
     page.on("response", s1_on_response)
 
     
-    # 候选替代(未定案, 下一步实验对象):
-    #   a) page.evaluate 直接调页面 SDK 的发送函数(SDK 自渲染滑块, 零表单操作)
-    #   b) P1 的 1105 conf 已到手 — 把验证 iframe 的 URL 构造出来后 navigate,
-    #      SDK 在授权页上下文内自行渲染(需验证 5014 上下文绑定)
+    # P2-b 方案: 用 P1 的 1105 conf 原文 + 真实 env(照抄 20:51 抓包模板, page.evaluate 实测)
+    #            拼滑块 URL → 同浏览器加载 → SDK 自渲染 → 拖。
+    # 模板来源: tmp/capture-full/20261013-205113-mcf events[152] — 与 hf 死因三变量对照:
+    #   fp=养熟✓(本浏览器) env=真实尺寸✓(evaluate取) SDK前置序列=页面自己拉✓(navigate加载)
     # await page.fill('input[placeholder="输入手机号"]', phone)
     # if not await real_click(page, "我已阅读并同意", starts=True):
     #     pr("[P2][!] 协议勾选未点中(继续)")
     # if not await real_click(page, "获取验证码"):
     #     pr("[P2][!] 获取验证码按钮未点中(继续)")
     # await asyncio.sleep(3)
-    pr("[P2][!] 填表触发已按铁律禁用 — 当前无合法滑块触发方式, 流程到此为止")
-    pr("[P2][i] 待实验: SDK evaluate 触发 或 授权页上下文 iframe URL 直航")
-    await ctx.close(); return 1
 
-    # 等滑块iframe
+    # ── P2-b: 真实URL模板拼滑块页, SDK自渲染 ──
+    pr("[P2b] 拼真实模板滑块URL(SDK自渲染)...")
+    from urllib.parse import quote
+    # 真实 env: 屏幕用固定真实值(1920x1080), browser/page 用本窗口实测尺寸 — 全部来自 evaluate
+    env_js = await page.evaluate(
+        "() => JSON.stringify({"
+        "screen: {w: window.screen.width, h: window.screen.height},"
+        "browser: {w: window.outerWidth, h: window.outerHeight},"
+        "page: {w: window.innerWidth, h: window.innerHeight},"
+        "document: {width: document.documentElement.clientWidth},"
+        "product_host: 'www.trae.cn', vc_version: '1.0.0.428',"
+        f"maskTime: Date.now(), h5_check_version: '4.0.4'}})")
+    try:
+        env_obj = json.loads(env_js)
+    except Exception:
+        env_obj = {"screen": {"w": 1920, "h": 1080}, "browser": {"w": 700, "h": 800},
+                   "page": {"w": 684, "h": 619}, "document": {"width": 684},
+                   "product_host": "www.trae.cn", "vc_version": "1.0.0.428",
+                   "maskTime": int(time.time() * 1000), "h5_check_version": "4.0.4"}
+    # verify_data = 1105 conf 原文(P1 HTTP 响应自带 fp/verify_ticket/detail/log_id)
+    verify_data = json.dumps(conf, ensure_ascii=False, separators=(",", ":"))
+    slider_url = ("https://rmc.bytedance.com/verifycenter/captcha/v2"
+                  "?from=iframe"
+                  f"&fp={quote(str(conf.get('fp') or fp), safe='')}"
+                  f"&env={quote(json.dumps(env_obj, separators=(',', ':')), safe='')}"
+                  "&aid=711126&scene_level=p2"
+                  "&host=https%3A%2F%2Fverify.zijieapi.com"
+                  "&lang=zh"
+                  f"&verify_data={quote(verify_data, safe='')}"
+                  "&extraConfig=%7B%7D")
+    pr(f"[P2b] slider_url前200: {slider_url[:200]}")
+    trace("slider_url", url=slider_url)
+
+    # 同一浏览器导航到滑块页(SDK 前置序列 index.js/collect-base.js/captcha.js 由页面自拉)
+    try:
+        await page.goto(slider_url, wait_until="domcontentloaded", timeout=45000)
+    except Exception as e:
+        pr(f"[P2b] 导航异常: {str(e)[:90]}")
+    await asyncio.sleep(5)
+
+    
+    async def slider_visible():
+        for sel in ('iframe[src*="verifycenter"]', 'text=按住左边按钮', 'text=拖动滑块',
+                    'canvas', '.captcha_container'):
+            try:
+                if await page.locator(sel).first.is_visible():
+                    return True
+            except Exception:
+                continue
+        return False
+    if not await diagnostics.wait_for("slider_visible", slider_visible, timeout_s=30):
+        pr("[X] P2b 滑块未渲染 — URL 有误(留痕已存)")
+        await diagnostics.snapshot("p2b_noslider")
+        await ctx.close(); return 1
+    pr("[P2b] ★ 滑块已渲染(SDK自渲染, 零表单) — 拖")
+
+    # 顶层渲染模式: 无 verifycenter iframe, solve_slider 的 iframe 定位需兼容
+    # 真实文案"按住左边按钮拖动完成上方拼图"与 solve_slider 预期一致即可拖
     async def frame_visible():
-        try:
-            return await page.locator('iframe[src*="verifycenter"]').first.is_visible()
-        except Exception:
-            return False
+        return await slider_visible()
     if not await diagnostics.wait_for("verification_frame", frame_visible, timeout_s=30):
         # 可能已直接success(无滑块)
         pr("[P2] 滑块iframe未现 — 可能无需滑块")

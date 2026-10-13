@@ -85,7 +85,8 @@ def load_credentials(cli: dict = None) -> dict:
     merged = {}
     if CRED_FILE.exists():
         try:
-            merged.update(json.loads(CRED_FILE.read_text(encoding="utf-8")))
+            # utf-8-sig: 容忍 PowerShell 写入的 BOM
+            merged.update(json.loads(CRED_FILE.read_text(encoding="utf-8-sig")))
         except (ValueError, OSError):
             pass
     env = {k.lower(): v for k, v in os.environ.items() if k.startswith("HAOZHU_")}
