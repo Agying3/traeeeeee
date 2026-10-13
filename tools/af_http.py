@@ -193,14 +193,20 @@ async def main():
         asyncio.ensure_future(cap())
     page.on("response", s1_on_response)
 
-    # 授权页登录表单里把号填上(与SDK共参), 点获取验证码 → SDK出滑块
-    # 注: 这是"让人机验证出现"的必要触发, 非注册动作(注册走P4 HTTP)
-    await page.fill('input[placeholder="输入手机号"]', phone)
-    if not await real_click(page, "我已阅读并同意", starts=True):
-        pr("[P2][!] 协议勾选未点中(继续)")
-    if not await real_click(page, "获取验证码"):
-        pr("[P2][!] 获取验证码按钮未点中(继续)")
-    await asyncio.sleep(3)
+    
+    # 候选替代(未定案, 下一步实验对象):
+    #   a) page.evaluate 直接调页面 SDK 的发送函数(SDK 自渲染滑块, 零表单操作)
+    #   b) P1 的 1105 conf 已到手 — 把验证 iframe 的 URL 构造出来后 navigate,
+    #      SDK 在授权页上下文内自行渲染(需验证 5014 上下文绑定)
+    # await page.fill('input[placeholder="输入手机号"]', phone)
+    # if not await real_click(page, "我已阅读并同意", starts=True):
+    #     pr("[P2][!] 协议勾选未点中(继续)")
+    # if not await real_click(page, "获取验证码"):
+    #     pr("[P2][!] 获取验证码按钮未点中(继续)")
+    # await asyncio.sleep(3)
+    pr("[P2][!] 填表触发已按铁律禁用 — 当前无合法滑块触发方式, 流程到此为止")
+    pr("[P2][i] 待实验: SDK evaluate 触发 或 授权页上下文 iframe URL 直航")
+    await ctx.close(); return 1
 
     # 等滑块iframe
     async def frame_visible():
@@ -236,106 +242,143 @@ async def main():
         await ctx.close(); return 1
     pr(f"[P3] ★ mobile_ticket={ticket[:24]}... 短信应已下发")
 
-    # ── 阶段4: 豪猪收码 → HTTP sms_login(观测 IsLogin 翻 True) ──
+    # ── 阶段4: 豪猪收码 → 页内 fetch sms_login（授权页上下文与浏览器 cookie） ──
     pr("[P4] 豪猪收码...")
     sms_code = hz.poll_code(phone, rounds=60, log=pr)
     if not sms_code:
         pr("[X] 收码失败")
         await ctx.close(); return 1
-    # HTTP sms_login — 用 lib 的现成实现(纯HTTP, 走代理); 返回 (parsed, resp)
-    pr("[P4] HTTP sms_login...")
-    ip2, port2, user2, pwd2 = load_proxy(idx)
+    
+    pr("[P4] 页内 fetch sms_login(授权页上下文)...")
     try:
-        parsed, resp = lib.sms_login(phone, sms_code,
-                                     cookies={c["name"]: c["value"] for c in cookies},
-                                     csrf_token=next((c["value"] for c in cookies
-                                                      if c["name"] == "passport_csrf_token"), None),
-                                     proxies={"http": f"http://{user2}:{pwd2}@{ip2}:{port2}",
-                                              "https": f"http://{user2}:{pwd2}@{ip2}:{port2}"})
-        trace("sms_login_raw", status=resp.status_code, body=resp.text[:2500],
-              set_cookie=resp.headers.get("Set-Cookie", "")[:1500])
-        login_cookies = lib.extract_login_cookies(resp)
-        ok = str(parsed.get("message", "")) == "success"
-        pr(f"[P4] sms_login HTTP={resp.status_code} message={parsed.get('message')} "
-           f"Set-Cookie键={len(login_cookies)}")
+        r_inpage = await page.evaluate(
+            """async ({mob, code, csrf}) => {
+              return fetch('https://www.trae.cn/passport/web/sms_login/?passport_jssdk_version=3.0.11&passport_jssdk_type=normal&aid=711126&language=zh&account_sdk_source=web&mix_mode=1&fixed_mix_mode=1',
+                {method:'POST', credentials:'include',
+                 headers:{'content-type':'application/x-www-form-urlencoded',
+                          'x-tt-passport-csrf-token':csrf},
+                 body:'mix_mode=1&mobile='+mob+'&code='+code+'&fixed_mix_mode=1'})
+               .then(r=>r.text()).catch(e=>'ERR:'+e);
+            }""",
+            {"mob": enc_phone(phone), "code": enc_phone(sms_code),
+             "csrf": next((c["value"] for c in cookies if c["name"] == "passport_csrf_token"), "")})
+        pr(f"[P4] 页内sms_login: {str(r_inpage)[:130]}")
+        trace("sms_login_inpage", body=str(r_inpage)[:1500])
+        ok = "success" in str(r_inpage)
         if not ok:
-            pr(f"[P4][!] body: {resp.text[:200]}")
-        trace("sms_login", ok=ok, message=str(parsed.get("message"))[:60],
-              cookie_keys=list(login_cookies.keys())[:30])
-        if not login_cookies:
-            pr("[X] 无登录cookie — 停")
+            pr("[X] 页内sms_login未success — 停")
             await ctx.close(); return 1
     except Exception as e:
-        pr(f"[X] sms_login 异常: {str(e)[:130]}")
+        pr(f"[X] 页内sms_login异常: {str(e)[:130]}")
         trace("sms_login_error", error=str(e)[:300])
         await ctx.close(); return 1
-
-    # ── 阶段5: 授权页观测(IsLogin 真值) + 换证 ──
-    pr("[P5] 授权页观测(IsLogin)...")
+    await asyncio.sleep(2)
     cookies = await ctx.cookies()
-    # 把 sms_login 的 cookie 注入浏览器(观测用)
+    login_cookies = {c["name"]: c["value"] for c in cookies}
+    pr(f"[P4] ★ 登录cookie在浏览器jar里: {len(cookies)}个(含sessionid={('sessionid' in login_cookies)})")
+
+    # ── 阶段5: 纯HTTP GetPCAuthCode → ExchangeToken → 导出(发现②: 参数全自知) ──
+    
+    # 它由授权页JS调 CheckLogin 后种下 — 注入登录cookie后静开一次授权页收集之
+    pr("[P5a] 注入cookie → 静开授权页收集 X-Cloudide-Session...")
     add = [{"name": k, "value": v, "domain": ".trae.cn", "path": "/"}
            for k, v in login_cookies.items()]
     try:
         await ctx.add_cookies(add)
     except Exception as e:
-        pr(f"[P5] 注入cookie异常: {e}")
-    
-    islogin = None
-    netcap = []
-    async def on_resp(resp):
-        url = resp.url
-        if not any(w in url for w in ("CheckLogin", "GetRefreshToken", "oauth", "login")):
-            return
-        async def cap():
-            try:
-                b = await asyncio.wait_for(resp.text(), timeout=20)
-            except Exception:
-                return
-            netcap.append({"url": url, "status": resp.status, "body": b[:3000]})
-            trace("net", url=url, status=resp.status, body=b[:2000])
-            if "CheckLogin" in url:
-                try:
-                    j2 = json.loads(b)
-                    nonlocal islogin
-                    islogin = j2.get("Result", {}).get("IsLogin")
-                    pr(f"[P5] CheckLogin: OID={j2.get('ResponseMetadata', {}).get('OID')} IsLogin={islogin}")
-                except Exception:
-                    pass
-        asyncio.ensure_future(cap())
-    page.on("response", on_resp)
-    try:
-        await page.goto("about:blank")
-        await page.goto(auth_url, wait_until="domcontentloaded", timeout=WAIT_SECONDS * 1000)
-    except Exception as e:
-        pr(f"[P5] 导航异常: {str(e)[:80]}")
-    # 等到 CheckLogin 出结果(最多18s)
-    for _ in range(18):
-        if islogin is not None:
+        pr(f"[P5a] 注入cookie异常: {e}")
+    for nav_try in range(3):
+        try:
+            await page.goto("about:blank", wait_until="commit", timeout=8000)
+        except Exception:
+            pass
+        try:
+            await page.goto(auth_url, wait_until="domcontentloaded", timeout=WAIT_SECONDS * 1000)
             break
-        await asyncio.sleep(1)
-    await asyncio.sleep(4)
-
-    pr(f"[P5] IsLogin={islogin}")
-    trace("p5_verdict", islogin=islogin)
-
-    # 若 IsLogin=True → 授权页应出现"同意" → 页面自己走换证(抓包)
-    if islogin:
-        pr("[P5] ★ IsLogin=True — 找授权按钮/等GetRefreshToken...")
-        for i in range(30):
-            await asyncio.sleep(1)
-            if any("GetRefreshToken" in n["url"] for n in netcap):
-                break
-    else:
-        pr("[P5] IsLogin 非 True — 记录后收尾(纯HTTP观测完成)")
-
-    # 快照收尾
+        except Exception as e:
+            pr(f"[P5a] 导航重试{nav_try + 1}: {str(e)[:70]}")
+            await asyncio.sleep(3)
+    await asyncio.sleep(8)
+    cookies = await ctx.cookies()
+    trace("p5a_cookies", names=[c["name"] for c in cookies])
+    has_xcs = any(c["name"] == "X-Cloudide-Session" for c in cookies)
+    pr(f"[P5a] X-Cloudide-Session={'★有' if has_xcs else '✗无'} cookies={len(cookies)}")
+    # IsLogin 真值观测(顺手): 页内 fetch CheckLogin, 带全部当前cookie
     try:
-        await diagnostics.snapshot("final")
+        r_cl = await page.evaluate(
+            "() => fetch('https://api.trae.cn/cloudide/api/v3/trae/CheckLogin',"
+            "{method:'POST', credentials:'include',"
+            "headers:{'content-type':'application/json'}, body:'{}'})"
+            ".then(r=>r.text()).catch(e=>'ERR')")
+        m_oid = __import__("re").search(r'"OID\\?":\\?"(\d+)', str(r_cl))
+        m_il = __import__("re").search(r'"IsLogin\\?":\\?(\w+)', str(r_cl))
+        pr(f"[P5a] 页内CheckLogin: OID={m_oid.group(1) if m_oid else '?'} "
+           f"IsLogin={m_il.group(1) if m_il else '?'}")
+        trace("p5a_checklogin", body=str(r_cl)[:600])
+    except Exception as e:
+        pr(f"[P5a] 页内CheckLogin失败: {str(e)[:80]}")
+
+    pr("[P5b] 纯HTTP GetPCAuthCode...")
+    all_cookies = {c["name"]: c["value"] for c in cookies}
+    all_cookies.update(login_cookies)
+    cookie_hdr2 = "; ".join(f"{k}={v}" for k, v in all_cookies.items())
+    gpc_body = json.dumps({
+        "ClientID": lib.client_id_for(args.variant),
+        "CodeChallenge": context.code_challenge,
+        "CodeChallengeMethod": "S256",
+        "DeviceID": context.device_id,
+        "PlatformCode": "SOLO_PC",
+    })
+    gpc_hdrs = {"User-Agent": UA, "Origin": "https://www.trae.cn",
+                "Referer": auth_url[:200], "Cookie": cookie_hdr2,
+                "Content-Type": "application/json"}
+    st, out = curl("POST", "https://api.trae.cn/cloudide/api/v3/trae/oauth/GetPCAuthCode",
+                   idx, gpc_body, gpc_hdrs)
+    pr(f"[P5] GetPCAuthCode HTTP={st} {out[:150]}")
+    auth_code = ""
+    try:
+        j3 = json.loads(out)
+        res = j3.get("Result") or j3.get("data") or j3
+        auth_code = res.get("AuthCode") or res.get("authCode") or ""
     except Exception:
         pass
-    await ctx.close()
-    pr("[i] 完成. 抓包: " + str(TRACE))
+    if not auth_code:
+        pr("[X] 未拿到 AuthCode — 停(响应留痕在trace, 诊断头/cookie问题)")
+        try:
+            await diagnostics.snapshot("gpc_fail")
+        except Exception:
+            pass
+        await ctx.close(); return 1
+    pr(f"[P5] ★ AuthCode={auth_code[:24]}... (10分钟内换证)")
+
+    # ── P6: ExchangeToken → GetUserInfo → agent2api 导出 ──
+    pr("[P6] ExchangeToken...")
+    import requests as rq
+    sess = rq.Session()
+    sess.cookies.update(all_cookies)
+    sess.proxies = {"http": f"http://{user2}:{pwd2}@{ip2}:{port2}",
+                    "https": f"http://{user2}:{pwd2}@{ip2}:{port2}"}
+    try:
+        exchange = lib.exchange_auth_code(context, auth_code, lib.DEFAULT_LOGIN_HOST,
+                                          session=sess, trace=None)
+        pr("[P6] ★ ExchangeToken success")
+    except Exception as e:
+        pr(f"[X] ExchangeToken 失败: {str(e)[:150]}")
+        await ctx.close(); return 1
+    identity = lib.get_user_info(exchange["access"], session=sess, trace=None)
+    credential = lib.build_agent2api_credential(context, exchange, identity, args.variant)
+    credential["phone"] = phone
+    out_dir = ROOT / "tmp" / "register-credentials"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    outp = out_dir / f"{RUN_ID}.json"
+    outp.write_text(json.dumps(credential, ensure_ascii=False, indent=1), encoding="utf-8")
+    pr(f"\n[完成] ★★ 注册号IDE凭证: {outp}")
+    pr(f"[完成] uid={identity.get('uid')} phone={phone} expires={exchange.get('expires_ms')}")
+    trace("credential_done", phone=phone, uid=identity.get("uid"), path=str(outp))
+    try:
+        await ctx.close()
+    except Exception:
+        pass
     return 0
 
 if __name__ == "__main__":
