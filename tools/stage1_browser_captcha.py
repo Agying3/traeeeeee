@@ -397,6 +397,13 @@ async def _run_stage1_on_ctx(ctx, proxy_index: int, phone: str, headless: bool,
         if not page_loaded:
             raise RuntimeError("3次加载后登录页仍未就绪")
 
+        # 登录态污染防护: profile 里残留已登录 cookie → 登录页会跳用户态, 填号逻辑全错
+        logged_in = await page.evaluate(
+            "() => !!document.querySelector('[class*=avatar], [class*=user-info], a[href*=logout], [class*=logout]')")
+        if logged_in:
+            raise RuntimeError(
+                f"profile {profile_dir.name} 已含登录态(疑似污染) —— 请人工确认或删除该 profile 后重跑")
+
         if not await diagnostics.wait_for("login_form",
                                           lambda: page.locator('input[placeholder="输入手机号"]').is_visible(),
                                           timeout_s=WAIT_SECONDS):
