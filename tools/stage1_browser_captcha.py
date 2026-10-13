@@ -101,6 +101,14 @@ async def solve_slider(page, ctx, cdp, diagnostics, max_attempts):
     prev_bg_url = None
     for attempt in range(1, max_attempts + 1):
         pr(f"[i] ===== 滑块第 {attempt}/{max_attempts} 次尝试 =====")
+        # 首查哨兵: 拖动后 SDK 重发 send_code success = 短信已发出 = 全部使命完成,
+        # 无需再关心 verify 抓包时序(响应体可能抓到空串, 不可靠)
+        def sms_already_sent():
+            return any("send_code" in e["url"] and (e.get("body") or "").find('"message":"success"') >= 0
+                       for e in netlog)
+        if sms_already_sent():
+            pr("[i] ★ 哨兵: send_code 已 success(短信已发出), 滑块流程提前收工")
+            return True, None
         info = iframe_frame = None
 
         async def images_ready():
@@ -236,6 +244,10 @@ async def solve_slider(page, ctx, cdp, diagnostics, max_attempts):
         v = await diagnostics.wait_for(f"verdict_{attempt}",
                                        lambda: verdicts[-1] if len(verdicts) > n_start else None,
                                        timeout_s=WAIT_SECONDS)
+        # 哨兵复查: 等待期间 SDK 可能已完成重发, 直接查 send_code success
+        if sms_already_sent():
+            pr("[i] ★ 哨兵: send_code 已 success(短信已发出), 判定以它为准")
+            return True, None
         body = (v or {}).get("body") or ""
         passed = '"code":200' in body
         pr(f"[i] 判定: {body[:120] or '(无响应)'} → {'★通过' if passed else '未通过'}")
@@ -330,36 +342,48 @@ async def run_stage1(proxy_index: int, phone: str, headless: bool = False, attem
                                           timeout_s=WAIT_SECONDS):
             raise RuntimeError("登录表单未就绪")
         await page.fill('input[placeholder="输入手机号"]', phone)
-        if not await diagnostics.wait_for("phone_filled",
-                                          lambda: page.locator('input[placeholder="输入手机号"]').input_value() == phone,
-                                          timeout_s=15):
+
+        async def phone_filled():
+            try:
+                return await page.locator('input[placeholder="输入手机号"]').input_value() == phone
+            except Exception:
+                return False
+        if not await diagnostics.wait_for("phone_filled", phone_filled, timeout_s=15):
             raise RuntimeError("手机号填入丢失(页面未就绪)")
         if not await real_click(page, "我已阅读并同意", starts=True):
             raise RuntimeError("未找到协议勾选元素")
-        if not await real_click(page, "获取验证码"):
-            raise RuntimeError("未找到获取验证码按钮")
 
-        n_net_start = len(netlog)
-        if not await diagnostics.wait_for("send_code_request",
-                                          lambda: any("send_code" in e["url"] for e in netlog[n_net_start:]),
-                                          timeout_s=WAIT_SECONDS):
-            raise RuntimeError("send_code 请求未发出")
+        # 发码循环: error_code=7(频控, 可能是预检curl的余波或瞬时限制)就等65秒重按, 最多3发
+        error_code = None
+        for send_try in range(1, 4):
+            if not await real_click(page, "获取验证码"):
+                raise RuntimeError("未找到获取验证码按钮")
+            n_net_start = len(netlog)
+            if not await diagnostics.wait_for("send_code_request",
+                                              lambda: any("send_code" in e["url"] for e in netlog[n_net_start:]),
+                                              timeout_s=WAIT_SECONDS):
+                raise RuntimeError("send_code 请求未发出")
 
-        async def send_code_result():
-            for entry in reversed(netlog[n_net_start:]):
-                if "send_code" in entry["url"] and entry.get("body") is not None:
-                    return entry
-            return None
-        result = await diagnostics.wait_for("send_code_response", send_code_result, timeout_s=WAIT_SECONDS)
-        if not result or result.get("body_error"):
-            raise RuntimeError("send_code 响应未完整取得")
-        try:
-            error_code = (json.loads(result["body"]).get("data") or {}).get("error_code")
-        except ValueError:
-            error_code = None
-        pr(f"[i] send_code 首响应: HTTP {result['status']} error_code={error_code}")
+            async def send_code_result():
+                for entry in reversed(netlog[n_net_start:]):
+                    if "send_code" in entry["url"] and entry.get("body") is not None:
+                        return entry
+                return None
+            result = await diagnostics.wait_for("send_code_response", send_code_result, timeout_s=WAIT_SECONDS)
+            if not result or result.get("body_error"):
+                raise RuntimeError("send_code 响应未完整取得")
+            try:
+                error_code = (json.loads(result["body"]).get("data") or {}).get("error_code")
+            except ValueError:
+                error_code = None
+            pr(f"[i] send_code 响应({send_try}/3): HTTP {result['status']} error_code={error_code}")
+            if str(error_code) != "7":
+                break
+            if send_try < 3:
+                pr("[i] error_code=7 频控, 等 65 秒冷却后在同一页面重按(不换号不重启浏览器)...")
+                await page.wait_for_timeout(65000)
         if str(error_code) == "7":
-            raise RuntimeError("手机号被限频(error_code=7): 换号或等冷却")
+            raise RuntimeError("3 次重试仍 error_code=7: 号或环境被持续限频, 换号/换代理")
         if error_code is None:
             pr("[i] 无滑块直接放行(罕见), 短信可能已发出")
 
