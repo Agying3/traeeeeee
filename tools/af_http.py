@@ -10,29 +10,34 @@ import sys
 import time
 import pathlib
 import subprocess
+import os
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-sys.path.insert(0, str(ROOT / "slider-captcha-lab-main"))
+sys.path.insert(0, os.environ.get("TRAE_SLIDER_LIB", str(ROOT / "slider-captcha-lab-main")))
 
 import trae_pipeline_lib as lib
-from stage1_browser_captcha import PROXY_FILE, solve_slider, real_click, WAIT_SECONDS
+from stage1_browser_captcha import PROXY_FILE, solve_slider, WAIT_SECONDS
 from page_diagnostics import PageDiagnostics
 
-RUN_ID = time.strftime("%Y%m%d-%H%M%S") + "-afhttp"
-RUN_DIR = ROOT / "tmp" / "register-diagnostics" / RUN_ID
-TRACE = ROOT / "tmp" / "http-trace" / (RUN_ID + ".jsonl")
-TRACE.parent.mkdir(parents=True, exist_ok=True)
-PROFILES = ROOT / "tmp" / "cloak-profiles"
+DATA_DIR = pathlib.Path(os.environ.get("TRAE_DATA_DIR", str(ROOT / "tmp")))
+RUN_ID = time.strftime("%Y%m%d-%H%M%S") + "-afhttp-" + __import__("uuid").uuid4().hex[:8]
+RUN_DIR = DATA_DIR / "register-diagnostics" / RUN_ID
+TRACE = DATA_DIR / "http-trace" / (RUN_ID + ".jsonl")
+PROFILES = DATA_DIR / "cloak-profiles"
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/203.0.113.1 Safari/537.36")
 
-_trace_f = open(TRACE, "w", encoding="utf-8")
+_trace_f = None
 
 def pr(*a):
     print(*a, flush=True)
 
 def trace(kind, **kw):
+    global _trace_f
+    if _trace_f is None:
+        TRACE.parent.mkdir(parents=True, exist_ok=True)
+        _trace_f = open(TRACE, "a", encoding="utf-8")
     rec = {"t": int(time.time() * 1000), "kind": kind}
     rec.update(kw)
     _trace_f.write(json.dumps(rec, ensure_ascii=False) + "\n")
@@ -94,7 +99,7 @@ async def main():
 
     from cloakbrowser import launch_persistent_context_async
     ctx = await launch_persistent_context_async(
-        user_data_dir=str(profile), headless=False,
+        user_data_dir=str(profile), headless=os.environ.get("TRAE_HEADLESS", "0") == "1",
         proxy=f"http://{user}:{pwd}@{ip}:{port}",
         geoip=True, humanize=True,
         args=[f"--fingerprint={seed}", "--window-size=700,800", "--disable-http2", "--lang=zh-CN"],
@@ -111,7 +116,7 @@ async def main():
     context = lib.LoginContext(args.variant, 0)
     
     try:
-        (ROOT / "tmp" / "http-trace" / f"{RUN_ID}-context.json").write_text(
+        (DATA_DIR / "http-trace" / f"{RUN_ID}-context.json").write_text(
             json.dumps(context.to_json(), ensure_ascii=False, indent=1), encoding="utf-8")
     except Exception:
         pass
@@ -200,16 +205,8 @@ async def main():
     page.on("response", s1_on_response)
 
     
-    # P2-b 方案: 用 P1 的 1105 conf 原文 + 真实 env(照抄 20:51 抓包模板, page.evaluate 实测)
-    #            拼滑块 URL → 同浏览器加载 → SDK 自渲染 → 拖。
-    # 模板来源: tmp/capture-full/20261013-205113-mcf events[152] — 与 hf 死因三变量对照:
-    #   fp=养熟✓(本浏览器) env=真实尺寸✓(evaluate取) SDK前置序列=页面自己拉✓(navigate加载)
-    # await page.fill('input[placeholder="输入手机号"]', phone)
-    # if not await real_click(page, "我已阅读并同意", starts=True):
-    #     pr("[P2][!] 协议勾选未点中(继续)")
-    # if not await real_click(page, "获取验证码"):
-    #     pr("[P2][!] 获取验证码按钮未点中(继续)")
-    # await asyncio.sleep(3)
+    
+    # 已彻底移除, 不留注释尸体 — P1 纯HTTP send_code + P2b 真实URL模板滑块完全替代其功能。
 
     # ── P2-b: 真实URL模板拼滑块页, SDK自渲染 ──
     pr("[P2b] 拼真实模板滑块URL(SDK自渲染)...")
@@ -509,7 +506,7 @@ async def main():
     identity = lib.get_user_info(exchange["access"], session=sess, trace=None)
     credential = lib.build_agent2api_credential(context, exchange, identity, args.variant)
     credential["phone"] = phone
-    out_dir = ROOT / "tmp" / "register-credentials"
+    out_dir = DATA_DIR / ("credentials" if os.environ.get("TRAE_DATA_DIR") else "register-credentials")
     out_dir.mkdir(parents=True, exist_ok=True)
     outp = out_dir / f"{RUN_ID}.json"
     outp.write_text(json.dumps(credential, ensure_ascii=False, indent=1), encoding="utf-8")
