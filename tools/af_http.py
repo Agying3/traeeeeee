@@ -19,6 +19,7 @@ sys.path.insert(0, os.environ.get("TRAE_SLIDER_LIB", str(ROOT / "slider-captcha-
 import trae_pipeline_lib as lib
 from stage1_browser_captcha import PROXY_FILE, solve_slider, WAIT_SECONDS
 from page_diagnostics import PageDiagnostics
+from registration_control import emit, options, wait_sms
 
 DATA_DIR = pathlib.Path(os.environ.get("TRAE_DATA_DIR", str(ROOT / "tmp")))
 RUN_ID = time.strftime("%Y%m%d-%H%M%S") + "-afhttp-" + __import__("uuid").uuid4().hex[:8]
@@ -32,6 +33,9 @@ _trace_f = None
 
 def pr(*a):
     print(*a, flush=True)
+    message = " ".join(map(str, a))
+    if message.startswith(("[P", "[完成]")):
+        emit(message[:140], status="running")
 
 def trace(kind, **kw):
     global _trace_f
@@ -79,7 +83,7 @@ def send_code_url(extra=""):
 async def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("proxy_index", type=int)
-    parser.add_argument("--hz-uid", default="58562-U682TDEZW4")
+    parser.add_argument("--hz-uid", default="")
     parser.add_argument("--variant", default="solo")
     args = parser.parse_args()
     idx = args.proxy_index
@@ -90,10 +94,12 @@ async def main():
     phone = hz.get_phone(uid=args.hz_uid)
     pr(f"[i] 豪猪取号: {phone}")
     trace("phone", phone=phone)
+    emit("号码已取得", status="running", phone=phone)
 
     ip, port, user, pwd = load_proxy(idx)
     seed = lib.fingerprint_seed_for(idx)
-    profile = PROFILES / f"cloak-http-{idx}"
+    profile_tag = os.environ.get("TRAE_PROFILE_TAG", "")
+    profile = PROFILES / (f"cloak-http-{idx}-" + profile_tag if profile_tag else f"cloak-http-{idx}")
     profile.mkdir(parents=True, exist_ok=True)
     pr(f"[i] 代理#{idx} {ip}:{port} seed={seed} (换指纹换IP: 新profile cloak-http-{idx})")
 
@@ -282,7 +288,7 @@ async def main():
         pr("[P2] 滑块iframe未现 — 可能无需滑块")
     else:
         # solve_slider 用三防线+CDP(唯一交互: 拖)
-        passed, v = await solve_slider(page, ctx, cdp, diagnostics, 3)
+        passed, v = await solve_slider(page, ctx, cdp, diagnostics, 1 + int(options().get("slider_retry", 2)))
         if not passed:
             pr("[X] 滑块未过 — 停")
             await ctx.close(); return 1
@@ -307,7 +313,11 @@ async def main():
 
     # ── 阶段4: 豪猪收码 → 页内 fetch sms_login（授权页上下文与浏览器 cookie） ──
     pr("[P4] 豪猪收码...")
-    sms_code = hz.poll_code(phone, rounds=60, log=pr)
+    try:
+        sms_code = await wait_sms(hz, phone)
+    except TimeoutError:
+        await ctx.close()
+        return 2
     if not sms_code:
         pr("[X] 收码失败")
         await ctx.close(); return 1

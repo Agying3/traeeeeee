@@ -14,7 +14,7 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -81,7 +81,7 @@ def queue_load():
             state["fail"] = d.get("fail", 0)
             # 重启后 running 任务标回 pending(可重跑)
             for t in state["queue"]:
-                if t.get("status") == "running":
+                if t.get("status") in ("running", "waiting_code"):
                     t["status"] = "pending"; t["stage"] = "重启恢复"
         except Exception as error:
             log(f"队列读取失败，保留原文件: {error}")
@@ -137,8 +137,11 @@ async def queue_code(req: CodeReq):  # 手动输码: 豪猪没抓到时人工兜
     t = state["queue"][req.idx]
     if t.get("status") != "waiting_code":
         raise HTTPException(400, f"该任务不在等码状态({t.get('status')})")
-    t["manual_code"] = req.code.strip()
-    log(f"手动输码: 任务#{req.idx} = {req.code.strip()}")
+    try:
+        ENGINE.submit_code(t, req.code.strip())
+    except ValueError as error:
+        raise HTTPException(400, str(error))
+    log(f"任务#{req.idx} 手动验证码已交给注册进程")
     queue_save()
     return {"ok": True}
 
@@ -152,6 +155,9 @@ async def queue_retry(req: TaskIdx):
     if req.idx < 0 or req.idx >= len(state["queue"]):
         raise HTTPException(404, "任务不存在")
     t = state["queue"][req.idx]
+    if t.get("status") in ("running", "waiting_code", "ok"):
+        raise HTTPException(409, "当前任务请先停止；成功任务无需重试")
+    t["retries"] = 0
     t["status"] = "pending"; t["stage"] = "手动重试"; t["cred"] = False
     log(f"重试: 任务#{req.idx}")
     queue_save()
@@ -161,6 +167,8 @@ async def queue_retry(req: TaskIdx):
 @app.post("/api/queue/remove")
 async def queue_remove(req: TaskIdx):
     if 0 <= req.idx < len(state["queue"]):
+        if state["queue"][req.idx].get("status") in ("running", "waiting_code"):
+            raise HTTPException(409, "请先停止运行中的任务")
         removed = state["queue"].pop(req.idx)
         log(f"移除任务: {removed.get('phone') or '未取号'}")
         queue_save()
@@ -172,93 +180,16 @@ def _af_cmd(task) -> list:
     return [sys.executable, "-X", "utf8", str(TOOLS / "af_http.py"), str(task["proxy"])]
 
 
+from registration_engine import RegistrationEngine
+
+ENGINE = RegistrationEngine(state, load_config, queue_save, log, metrics_save,
+                            lambda task: _af_cmd(task),
+                            lambda proc: _terminate_registration(proc), runtime.RUN_DIR, PROGRAM_DIR)
+
+
 @app.post("/api/engine/start")
 async def engine_start():
-    if state["running"]:
-        return {"ok": True}
-    state["running"] = True
-
-    async def run_one(task):
-        task["status"] = "running"
-        task.setdefault("id", uuid.uuid4().hex)
-        started = time.time()
-        task["started"] = started
-        queue_save()
-        proc = None
-        text = ""
-        output = None
-        task["run_id"] = uuid.uuid4().hex
-        output_path = runtime.RUN_DIR / f"{task['run_id']}.log"
-        cmd = _af_cmd(task)
-        try:
-            task["stage"] = "af_http 全链"
-            if MANAGED:
-                runtime.RUN_DIR.mkdir(parents=True, exist_ok=True)
-                output = output_path.open("ab", buffering=0)
-            proc = await asyncio.create_subprocess_exec(
-                *cmd, cwd=str(PROGRAM_DIR if MANAGED else ROOT),
-                stdout=output if output else asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.STDOUT)
-            state["process"] = proc
-            if output:
-                await asyncio.wait_for(proc.wait(), timeout=900)
-                text = output_path.read_text(encoding="utf-8", errors="replace")
-            else:
-                out, _ = await asyncio.wait_for(proc.communicate(), timeout=900)
-                text = (out or b"").decode("utf-8", "replace")
-            # 从输出抓手机号/阶段(队列行更真实)
-            import re
-            m = re.search(r"手机号[^\d]*(1\d{10})", text)
-            if m:
-                task["phone"] = m.group(1)
-            stages = [s for s in ("滑块通过", "凭证落袋", "短信", "mobile_ticket") if s in text]
-            if stages:
-                task["stage"] = "→".join(stages[-2:])
-            for ln in text.splitlines()[-30:]:
-                log("af: " + ln)
-            took = round(time.time() - started, 1)
-            if proc.returncode == 0:
-                task["status"] = "ok"; task["stage"] = "凭证落袋"; task["cred"] = True
-                state["done"] += 1
-                metrics_save({"event": "ok", "phone": task["phone"],
-                              "proxy": task["proxy"], "took_s": took})
-            else:
-                task["status"] = "fail"; state["fail"] += 1
-                metrics_save({"event": "fail", "phone": task["phone"],
-                              "proxy": task["proxy"], "took_s": took,
-                              "tail": text.splitlines()[-1][:100] if text else ""})
-        except asyncio.CancelledError:
-            task["status"] = "pending"
-            task["stage"] = "服务停止，等待重试"
-            raise
-        except Exception as e:
-            task["status"] = "fail"; state["fail"] += 1
-            log(f"任务异常: {e}")
-            metrics_save({"event": "fail", "phone": task.get("phone", ""),
-                          "proxy": task.get("proxy"), "took_s": 0, "tail": str(e)[:100]})
-        finally:
-            if proc and proc.returncode is None:
-                await _terminate_registration(proc)
-            state["process"] = None
-            queue_save()
-            if output:
-                output.close()
-            if MANAGED:
-                runtime.RUN_DIR.mkdir(parents=True, exist_ok=True)
-                runtime.atomic_json(runtime.RUN_DIR / f"{task['run_id']}.json", task)
-
-    async def worker():
-        while state["running"]:
-            task = next((t for t in state["queue"] if t["status"] == "pending"), None)
-            if not task:
-                break
-            await run_one(task)
-        state["running"] = False
-        log("引擎空闲停止")
-
-    state["worker"] = asyncio.create_task(worker())
-    return {"ok": True}
-
+    return await ENGINE.start()
 
 async def _terminate_registration(proc):
     if proc.returncode is not None:
@@ -279,21 +210,7 @@ async def _terminate_registration(proc):
 
 # ── 看门狗: 等码超时自动标记/重入队(sense同款) ──────────
 async def watchdog():
-    while True:
-        await asyncio.sleep(60)
-        cfg = load_config()
-        limit = (cfg.get("code_timeout_minutes", 5)) * 60
-        for t in state["queue"]:
-            if t.get("status") == "running" and t.get("wait_code_since") \
-                    and time.time() - t["wait_code_since"] > limit:
-                t["stage"] = "等码超时"
-                if cfg.get("timeout_requeue") and t.get("retries", 0) < cfg.get("max_retries", 2):
-                    t["status"] = "pending"; t["retries"] = t.get("retries", 0) + 1
-                    log(f"看门狗: 超时重入队(第{t['retries']}次) {t.get('phone')}")
-                else:
-                    t["status"] = "fail"; state["fail"] += 1
-                    log(f"看门狗: 超时终局 {t.get('phone')}")
-                queue_save()
+    await ENGINE.watchdog()
 
 
 @app.on_event("startup")
@@ -407,7 +324,7 @@ async def _continuous_tick(c: dict):
             cont["paused"] = "daily"
             cont_note(f"今日加号已达上限 {cont['added']}/{daily_max}，停止补号")
         return
-    active = sum(1 for t in state["queue"] if t["status"] in ("pending", "running"))
+    active = sum(1 for t in state["queue"] if t["status"] in ("pending", "running", "waiting_code"))
     if active >= min_queue:
         if cont["paused"] not in ("", "daily"):
             cont_note("队列回充到位，值班恢复待命")
@@ -445,7 +362,7 @@ async def _continuous_tick(c: dict):
 @app.get("/api/continuous")
 async def continuous_get():
     c = load_config().get("continuous", {})
-    active = sum(1 for t in state["queue"] if t["status"] in ("pending", "running"))
+    active = sum(1 for t in state["queue"] if t["status"] in ("pending", "running", "waiting_code"))
     return {"config": c, "added_today": cont["added"], "date": cont["date"],
             "paused": cont["paused"], "balance": cont["balance"],
             "queue_active": active, "proxy_total": _proxy_total(),
@@ -760,11 +677,20 @@ async def settings_get():
     return load_config()
 
 
+class ProgramSettings(BaseModel):
+    workers: int = Field(1, ge=1, le=5)
+    code_timeout_minutes: float = Field(5, gt=0, le=60)
+    slider_retry: int = Field(2, ge=0, le=10)
+    timeout_requeue: bool = True
+    max_retries: int = Field(2, ge=0, le=10)
+    task_timeout_seconds: float = Field(900, gt=0, le=7200)
+
+
 @app.post("/api/settings")
-async def settings_set(c: dict):
-    cfg = load_config(); cfg.update(c)
+async def settings_set(c: ProgramSettings):
+    cfg = load_config(); cfg.update(c.model_dump(exclude_unset=True))
     CONFIG.parent.mkdir(parents=True, exist_ok=True)
-    CONFIG.write_text(json.dumps(cfg, ensure_ascii=False, indent=1), encoding="utf-8")
+    _atomic_write(CONFIG, cfg)
     log("设置已保存")
     return {"ok": True}
 

@@ -428,6 +428,7 @@ document.querySelectorAll('aside button').forEach(b => b.onclick = () => {
 
 /* ── 工作台 ── */
 async function loadWork() {
+  if (document.activeElement?.matches('#queue-body input')) return;
   try {
     const s = await api('/engine/state');
     const q = s.queue || [];
@@ -444,7 +445,7 @@ async function loadWork() {
       if (t.status === 'waiting_code')
         acts.push(`<input class="code" data-i="${i}" placeholder="输码">` +
                   `<button class="secondary" data-code="${i}">续</button>`);
-      if (t.status === 'fail' || t.status === 'ok')
+      if (t.status === 'fail')
         acts.push(`<button class="secondary" data-retry="${i}">重试</button>`);
       acts.push(`<button class="danger" data-rm="${i}">移除</button>`);
       return `<tr>
@@ -658,6 +659,7 @@ const loaders = {work: loadWork, haozhu: loadHaozhu, accounts: loadAccounts,
                  'logs-page': loadLogs};
 function loadCurrent() {
   const cur = document.querySelector('.page.on');
+  if (cur?.id === 'settings' && cur.contains(document.activeElement)) return;
   if (cur && loaders[cur.id]) loaders[cur.id]();
 }
 loadCurrent();
