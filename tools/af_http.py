@@ -85,14 +85,17 @@ async def main():
     parser.add_argument("proxy_index", type=int)
     parser.add_argument("--hz-uid", default="")
     parser.add_argument("--variant", default="solo")
+    parser.add_argument("--phone", default="", help="Reuse an already acquired SMS session")
     args = parser.parse_args()
+    if args.phone and not __import__("re").fullmatch(r"1[0-9]{10}", args.phone):
+        parser.error("Invalid phone")
     idx = args.proxy_index
 
     from haozhu_sms import build_client
     hz = build_client({})
     hz.ensure_login()
-    phone = hz.get_phone(uid=args.hz_uid)
-    pr(f"[i] 豪猪取号: {phone}")
+    phone = args.phone or hz.get_phone(uid=args.hz_uid)
+    pr(f"[i] {'复用已取号码' if args.phone else '豪猪取号'}: {phone}")
     trace("phone", phone=phone)
     emit("号码已取得", status="running", phone=phone)
 
@@ -179,7 +182,9 @@ async def main():
     if not conf:
         pr("[X] P1 未拿到 1105 挑战 — 停")
         await ctx.close(); return 1
-    pr(f"[P1] ★ 1105: fp={str(conf.get('fp'))[:26]}...")
+    
+    fp = str(conf.get("fp") or fp)
+    pr(f"[P1] ★ 1105: fp={fp[:26]}...")
 
     # ── 阶段2: 同浏览器, SDK内嵌滑块(浏览器唯一交互: 拖) ──
     # SDK滑块只在页面点"获取验证码"后出现 — 纯HTTP版用 page.evaluate 触发SDK自身的发送

@@ -148,6 +148,7 @@ async def queue_code(req: CodeReq):  # 手动输码: 豪猪没抓到时人工兜
 
 class TaskIdx(BaseModel):
     idx: int
+    reuse_phone: bool = False
 
 
 @app.post("/api/queue/retry")
@@ -157,6 +158,9 @@ async def queue_retry(req: TaskIdx):
     t = state["queue"][req.idx]
     if t.get("status") in ("running", "waiting_code", "ok"):
         raise HTTPException(409, "当前任务请先停止；成功任务无需重试")
+    if req.reuse_phone and not __import__("re").fullmatch(r"1[0-9]{10}", t.get("phone", "")):
+        raise HTTPException(400, "任务尚未保存号码")
+    t["reuse_phone"] = req.reuse_phone
     t["retries"] = 0
     t["status"] = "pending"; t["stage"] = "手动重试"; t["cred"] = False
     log(f"重试: 任务#{req.idx}")
@@ -177,7 +181,10 @@ async def queue_remove(req: TaskIdx):
 
 def _af_cmd(task) -> list:
     """注册链命令(测试替换点: 换成假引擎脚本即可不烧真钱全链演练)。"""
-    return [sys.executable, "-X", "utf8", str(TOOLS / "af_http.py"), str(task["proxy"])]
+    command = [sys.executable, "-X", "utf8", str(TOOLS / "af_http.py"), str(task["proxy"])]
+    if task.get("reuse_phone") and task.get("phone"):
+        command += ["--phone", task["phone"]]
+    return command
 
 
 from registration_engine import RegistrationEngine
