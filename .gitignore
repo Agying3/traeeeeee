@@ -1,0 +1,15 @@
+.venv/
+__pycache__/
+*.pyc
+data/config/
+data/state/
+data/logs/
+data/credentials/
+data/runs/
+data/http-trace/
+data/register-diagnostics/
+data/cloak-profiles/
+data/register-sessions/
+data/register-runs.jsonl
+data/proxy-ledger.json
+tools/proxies.txt

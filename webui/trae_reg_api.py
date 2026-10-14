@@ -3,6 +3,8 @@
 # 无数据库：凭证、队列状态和配置使用 runtime 提供的数据目录。
 import asyncio
 import json
+import os
+import uuid
 import subprocess
 import sys
 import time
@@ -15,10 +17,18 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 ROOT = Path(__file__).resolve().parents[2]
-TOOLS = ROOT / "trae.cn" / "tools"
-CRED_DIR = ROOT / "tmp" / "register-credentials"
-CONFIG = ROOT / "trae.cn" / "webui" / "config.json"
-GW = "http://127.0.0.1:3065"
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import runtime
+
+PROGRAM_DIR = Path(__file__).resolve().parents[1]
+MANAGED = bool(os.environ.get("TRAE_DATA_DIR"))
+TOOLS = PROGRAM_DIR / "tools"
+CRED_DIR = runtime.CRED_DIR if MANAGED else ROOT / "tmp" / "register-credentials"
+CONFIG = runtime.CONFIG_DIR / "webui.json" if MANAGED else Path(__file__).parent / "config.json"
+GW = os.environ.get("A2A_BASE_URL", "http://127.0.0.1:3065").rstrip("/")
+SERVICE_STARTED = time.time()
+SERVICE_LOGGER = runtime.configure_logging() if MANAGED else None
+BACKGROUND_TASKS = []
 
 app = FastAPI(title="Trae注册机")
 
@@ -31,6 +41,8 @@ def log(msg: str):
     line = f"[{time.strftime('%H:%M:%S')}] {msg}"
     log_lines.append(line)
     del log_lines[:-500]
+    if SERVICE_LOGGER:
+        SERVICE_LOGGER.info(msg)
 
 
 def load_config() -> dict:
@@ -43,15 +55,13 @@ def load_config() -> dict:
 
 
 # ── 队列/引擎(持久化: JSON原子写, 重启恢复 — 号是真金白银, 不能丢) ──
-QUEUE_FILE = ROOT / "trae.cn" / "webui" / "queue.json"
-METRICS_FILE = ROOT / "trae.cn" / "webui" / "metrics.json"
+QUEUE_FILE = runtime.STATE_DIR / "queue.json" if MANAGED else Path(__file__).parent / "queue.json"
+METRICS_FILE = runtime.STATE_DIR / "metrics.json" if MANAGED else Path(__file__).parent / "metrics.json"
 METRICS_MAX = 5000
 
 
 def _atomic_write(path: Path, data):
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
-    tmp.replace(path)
+    runtime.atomic_json(path, data)
 
 
 def queue_save():
@@ -73,8 +83,9 @@ def queue_load():
             for t in state["queue"]:
                 if t.get("status") == "running":
                     t["status"] = "pending"; t["stage"] = "重启恢复"
-        except Exception:
-            pass
+        except Exception as error:
+            log(f"队列读取失败，保留原文件: {error}")
+            raise
 
 
 def metrics_save(event: dict):
@@ -169,15 +180,32 @@ async def engine_start():
 
     async def run_one(task):
         task["status"] = "running"
+        task.setdefault("id", uuid.uuid4().hex)
         started = time.time()
+        task["started"] = started
+        queue_save()
+        proc = None
+        text = ""
+        output = None
+        task["run_id"] = uuid.uuid4().hex
+        output_path = runtime.RUN_DIR / f"{task['run_id']}.log"
         cmd = _af_cmd(task)
         try:
             task["stage"] = "af_http 全链"
+            if MANAGED:
+                runtime.RUN_DIR.mkdir(parents=True, exist_ok=True)
+                output = output_path.open("ab", buffering=0)
             proc = await asyncio.create_subprocess_exec(
-                *cmd, cwd=str(ROOT), stdout=asyncio.subprocess.PIPE,
+                *cmd, cwd=str(PROGRAM_DIR if MANAGED else ROOT),
+                stdout=output if output else asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT)
-            out, _ = await asyncio.wait_for(proc.communicate(), timeout=900)
-            text = (out or b"").decode("utf-8", "replace")
+            state["process"] = proc
+            if output:
+                await asyncio.wait_for(proc.wait(), timeout=900)
+                text = output_path.read_text(encoding="utf-8", errors="replace")
+            else:
+                out, _ = await asyncio.wait_for(proc.communicate(), timeout=900)
+                text = (out or b"").decode("utf-8", "replace")
             # 从输出抓手机号/阶段(队列行更真实)
             import re
             m = re.search(r"手机号[^\d]*(1\d{10})", text)
@@ -199,12 +227,25 @@ async def engine_start():
                 metrics_save({"event": "fail", "phone": task["phone"],
                               "proxy": task["proxy"], "took_s": took,
                               "tail": text.splitlines()[-1][:100] if text else ""})
+        except asyncio.CancelledError:
+            task["status"] = "pending"
+            task["stage"] = "服务停止，等待重试"
+            raise
         except Exception as e:
             task["status"] = "fail"; state["fail"] += 1
             log(f"任务异常: {e}")
             metrics_save({"event": "fail", "phone": task.get("phone", ""),
                           "proxy": task.get("proxy"), "took_s": 0, "tail": str(e)[:100]})
-        queue_save()
+        finally:
+            if proc and proc.returncode is None:
+                await _terminate_registration(proc)
+            state["process"] = None
+            queue_save()
+            if output:
+                output.close()
+            if MANAGED:
+                runtime.RUN_DIR.mkdir(parents=True, exist_ok=True)
+                runtime.atomic_json(runtime.RUN_DIR / f"{task['run_id']}.json", task)
 
     async def worker():
         while state["running"]:
@@ -215,8 +256,25 @@ async def engine_start():
         state["running"] = False
         log("引擎空闲停止")
 
-    asyncio.get_event_loop().create_task(worker())
+    state["worker"] = asyncio.create_task(worker())
     return {"ok": True}
+
+
+async def _terminate_registration(proc):
+    if proc.returncode is not None:
+        return
+    if os.name == "nt":
+        killer = await asyncio.create_subprocess_exec(
+            "taskkill", "/PID", str(proc.pid), "/T", "/F",
+            stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
+        await killer.wait()
+    else:
+        proc.terminate()
+    try:
+        await asyncio.wait_for(proc.wait(), timeout=8)
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.wait()
 
 
 # ── 看门狗: 等码超时自动标记/重入队(sense同款) ──────────
@@ -241,8 +299,20 @@ async def watchdog():
 @app.on_event("startup")
 async def _start_watchdog():
     cont_load()
-    asyncio.get_event_loop().create_task(watchdog())
-    asyncio.get_event_loop().create_task(continuous_loop())
+    BACKGROUND_TASKS.extend([asyncio.create_task(watchdog()),
+                             asyncio.create_task(continuous_loop())])
+    log("注册机服务就绪")
+
+
+@app.on_event("shutdown")
+async def _shutdown_program():
+    for task in BACKGROUND_TASKS:
+        task.cancel()
+    await asyncio.gather(*BACKGROUND_TASKS, return_exceptions=True)
+    await engine_stop()
+    queue_save()
+    cont_save()
+    log("注册机服务已停止，队列已保留")
 
 
 # ── 连续加号(自动补号值班员; sense WatcherService 的简化移植) ──
@@ -251,7 +321,7 @@ async def _start_watchdog():
 #   防线  每日上限 daily_max / 豪猪余额 min_balance / 代理池空 → 暂停留因, 恢复条件消失自动复工
 #   派活  入队 want 个任务(代理轮转, 一号一IP) → 引擎没跑就拉起
 #   记账  当日加号数跨重启保留(continuous.json, 日期翻篇自动清零)
-CONT_STATE_FILE = ROOT / "trae.cn" / "webui" / "continuous.json"
+CONT_STATE_FILE = runtime.STATE_DIR / "continuous.json" if MANAGED else Path(__file__).parent / "continuous.json"
 
 cont: dict = {"added": 0, "date": "", "paused": "", "balance": None,
               "proxy_cursor": 0, "logs": []}
@@ -437,9 +507,13 @@ async def metrics(window_h: int = 24):
 @app.post("/api/engine/stop")
 async def engine_stop():
     state["running"] = False
-    state["queue"] = [t for t in state["queue"] if t["status"] == "running"]
+    worker = state.get("worker")
+    if worker and not worker.done():
+        worker.cancel()
+        await asyncio.gather(worker, return_exceptions=True)
+    state["worker"] = None
     queue_save()
-    log("引擎停止指令")
+    log("引擎已停止，任务保留")
     return {"ok": True}
 
 
@@ -582,7 +656,7 @@ async def creds_export():
 
 
 # ── 代理池 ──────────────────────────────────────────────
-PROXY_FILE = ROOT / "trae.cn" / "tools" / "proxies.txt"
+PROXY_FILE = Path(os.environ.get("TRAE_PROXY_FILE", str(TOOLS / "proxies.txt")))
 
 
 @app.get("/api/proxies")
@@ -698,6 +772,29 @@ async def settings_set(c: dict):
 @app.get("/api/logs")
 async def logs():
     return {"lines": log_lines[-200:]}
+
+
+@app.get("/health")
+async def program_health():
+    return {"status": "ok", "service": "trae-registration", "version": runtime.VERSION,
+            "pid": os.getpid(), "root": str(PROGRAM_DIR), "python": sys.executable,
+            "data": str(runtime.DATA_DIR), "uptime_s": round(time.time() - SERVICE_STARTED),
+            "instance": os.environ.get("TRAE_SERVICE_INSTANCE", "")}
+
+
+from fastapi import Request
+
+
+@app.post("/api/program/stop")
+async def program_stop(request: Request):
+    instance = os.environ.get("TRAE_SERVICE_INSTANCE", "")
+    if not instance or request.headers.get("X-Service-Instance") != instance:
+        raise HTTPException(403, "服务实例不匹配")
+    callback = getattr(app.state, "shutdown", None)
+    if callback is None:
+        raise HTTPException(409, "请使用固定入口启动服务")
+    asyncio.get_running_loop().call_later(0.2, callback)
+    return {"ok": True}
 
 
 @app.get("/")

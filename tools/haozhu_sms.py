@@ -27,7 +27,7 @@ from dataclasses import dataclass
 import requests
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-CRED_FILE = ROOT / "tmp" / "haozhu.json"
+CRED_FILE = pathlib.Path(os.environ.get("TRAE_HAOZHU_FILE", str(ROOT / "tmp" / "haozhu.json")))
 BASE = "https://api.haozhuma.com/sms/"
 CODE_RE = re.compile(r"验证码[^0-9]{0,8}([0-9]{4,8})")
 ANY_CODE_RE = re.compile(r"(?<!\d)(\d{4,8})(?!\d)")

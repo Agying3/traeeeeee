@@ -16,13 +16,14 @@
 import asyncio
 import json
 import pathlib
+import os
 import random
 import sys
 import time
 import uuid
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-LAB = ROOT / "slider-captcha-lab-main"
+LAB = pathlib.Path(os.environ.get("TRAE_SLIDER_LIB", str(ROOT / "slider-captcha-lab-main")))
 sys.path.insert(0, str(LAB))
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
 
@@ -30,13 +31,14 @@ from playwright.async_api import TimeoutError as BrowserTimeout  # noqa: E402
 from page_diagnostics import PageDiagnostics  # noqa: E402
 import trae_pipeline_lib as lib  # noqa: E402
 
-PROXY_FILE = ROOT / "Webshare 250 proxies.txt"
-LEDGER = ROOT / "tmp" / "proxy-ledger.json"
-PROFILES = ROOT / "tmp" / "cloak-profiles"
-RUNS_LOG = ROOT / "tmp" / "register-runs.jsonl"
+DATA_DIR = pathlib.Path(os.environ.get("TRAE_DATA_DIR", str(ROOT / "tmp")))
+PROXY_FILE = pathlib.Path(os.environ.get("TRAE_PROXY_FILE", str(ROOT / "Webshare 250 proxies.txt")))
+LEDGER = DATA_DIR / "proxy-ledger.json"
+PROFILES = DATA_DIR / "cloak-profiles"
+RUNS_LOG = DATA_DIR / "register-runs.jsonl"
 RUN_ID = time.strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:8]
-RUN_DIR = ROOT / "tmp" / "register-diagnostics" / RUN_ID
-SESSIONS = ROOT / "tmp" / "register-sessions"
+RUN_DIR = DATA_DIR / "register-diagnostics" / RUN_ID
+SESSIONS = DATA_DIR / "register-sessions"
 WAIT_SECONDS = 120.0
 KEEP_OPEN = True  # 出错时保留窗口人工检查(留痕纪律)
 
