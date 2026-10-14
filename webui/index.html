@@ -250,8 +250,11 @@
         <label style="margin-top:10px;">密码 / Token
           <input id="hz-pass" type="password" placeholder="密码或 token">
         </label>
-        <label style="margin-top:10px;">SID（对接码）
+        <label style="margin-top:10px;">SID（项目ID）
           <input id="hz-sid" placeholder="58562">
+        </label>
+        <label style="margin-top:10px;">对接码 UID（可选，锁低价渠道）
+          <input id="hz-uid" placeholder="留空走默认渠道">
         </label>
         <button id="btn-hz-save" style="margin-top:12px;">保存</button>
       </div>
@@ -263,6 +266,32 @@
         <button id="btn-hz-search" class="secondary" style="margin-top:12px;">搜索项目</button>
         <div id="hz-projects" style="margin-top:12px;"></div>
       </div>
+    </div>
+    <div class="card" style="margin-top:16px;">
+      <h2>连续加号（自动补号值班）</h2>
+      <p style="color:var(--muted);font-size:13px;margin:4px 0 10px;">
+        队列缺号自动补：豪猪取号入队 + 自动拉起引擎。触发线/每日上限/余额下限三道防线，暂停原因自动恢复。
+      </p>
+      <div class="row" style="align-items:center;flex-wrap:wrap;gap:10px;">
+        <label style="display:flex;align-items:center;gap:6px;margin:0;">
+          <input type="checkbox" id="ct-enabled" style="width:auto;"> 启用值班
+        </label>
+        <label style="margin:0;">缺号线
+          <input id="ct-min-queue" type="number" min="1" style="width:70px;" value="3">
+        </label>
+        <label style="margin:0;">每轮加
+          <input id="ct-batch" type="number" min="1" style="width:60px;" value="2">
+        </label>
+        <label style="margin:0;">今日上限
+          <input id="ct-daily-max" type="number" min="1" style="width:70px;" value="20">
+        </label>
+        <label style="margin:0;">余额下限(¥)
+          <input id="ct-min-balance" type="number" min="0" step="0.5" style="width:80px;" value="5">
+        </label>
+        <button id="btn-ct-save">保存</button>
+      </div>
+      <div id="ct-status" style="margin-top:12px;"></div>
+      <div id="ct-logs" style="margin-top:8px;max-height:180px;overflow:auto;font-size:12px;color:var(--muted);"></div>
     </div>
   </section>
 
@@ -452,17 +481,63 @@ $('btn-engine-start').onclick = async () => { try { await api('/engine/start', {
 $('btn-engine-stop').onclick = async () => { try { await api('/engine/stop', {method:'POST'}); toast('引擎停止'); loadWork(); } catch (e) { toast(e.message); } };
 
 /* ── 豪猪 ── */
+const PAUSE_TEXT = {daily: '今日上限', balance: '余额不足', proxy: '代理池空'};
 async function loadHaozhu() {
   try {
     const c = await api('/haozhu/config');
-    $('hz-user').value = c.user || ''; $('hz-pass').value = ''; $('hz-sid').value = c.sid || '';
-    metric($('haozhu-metrics'), [['余额', c.balance ?? '—'], ['占用号', c.holding ?? 0]]);
+    $('hz-user').value = c.user || ''; $('hz-pass').value = '';
+    $('hz-sid').value = c.sid || ''; $('hz-uid').value = c.uid || '';
+    let m = [['余额', c.balance === '' || c.balance === undefined ? '—' : '¥' + c.balance],
+             ['占用号', c.occupied === '' || c.occupied === undefined ? '—' : c.occupied],
+             ['凭据', c.configured ? '已配' : '未配']];
+    try {
+      const ct = await api('/continuous');
+      m.push(['今日加号', ct.added_today + '/' + (ct.config?.daily_max ?? '—')]);
+      renderContinuous(ct);
+    } catch (e) {}
+    metric($('haozhu-metrics'), m);
   } catch (e) {}
+}
+function renderContinuous(ct) {
+  const cfg = ct.config || {};
+  $('ct-enabled').checked = !!cfg.enabled;
+  if (document.activeElement !== $('ct-min-queue')) $('ct-min-queue').value = cfg.min_queue ?? 3;
+  if (document.activeElement !== $('ct-batch')) $('ct-batch').value = cfg.batch ?? 2;
+  if (document.activeElement !== $('ct-daily-max')) $('ct-daily-max').value = cfg.daily_max ?? 20;
+  if (document.activeElement !== $('ct-min-balance')) $('ct-min-balance').value = cfg.min_balance ?? 5;
+  const on = cfg.enabled ? '<span class="tag ok">值班中</span>' : '<span class="tag">已停用</span>';
+  const pause = ct.paused
+    ? `<span class="tag bad">暂停: ${PAUSE_TEXT[ct.paused] || ct.paused}</span>` : '';
+  const bal = ct.balance === null || ct.balance === undefined ? '' : ` ¥${ct.balance}`;
+  $('ct-status').innerHTML =
+    `${on} ${pause} <span style="color:var(--muted);font-size:13px;">` +
+    `今日加号 ${ct.added_today}/${cfg.daily_max ?? '—'} · 队列积压 ${ct.queue_active} · ` +
+    `代理池 ${ct.proxy_total} · 豪猪余额${bal || ' —'}</span>`;
+  $('ct-logs').innerHTML = (ct.logs || []).slice().reverse()
+    .map(l => `<div>${l}</div>`).join('') || '<div style="color:var(--muted)">暂无日志</div>';
 }
 $('btn-hz-save').onclick = async () => {
   try { await api('/haozhu/config', {method: 'POST', body: JSON.stringify({
-    user: $('hz-user').value, pass: $('hz-pass').value, sid: $('hz-sid').value})});
+    user: $('hz-user').value, pass: $('hz-pass').value,
+    sid: $('hz-sid').value, uid: $('hz-uid').value})});
     toast('豪猪配置已保存'); loadHaozhu();
+  } catch (e) { toast(e.message); }
+};
+$('btn-ct-save').onclick = async () => {
+  try { await api('/continuous', {method: 'POST', body: JSON.stringify({
+    enabled: $('ct-enabled').checked, min_queue: +$('ct-min-queue').value,
+    batch: +$('ct-batch').value, daily_max: +$('ct-daily-max').value,
+    min_balance: +$('ct-min-balance').value})});
+    toast('连续加号配置已保存'); loadHaozhu();
+  } catch (e) { toast(e.message); }
+};
+$('btn-hz-search').onclick = async () => {
+  try {
+    const r = await api('/haozhu/search?kw=' + encodeURIComponent($('hz-proj-key').value || ''));
+    $('hz-projects').innerHTML = (r.items || []).map(p =>
+      `<div style="padding:4px 0;border-bottom:1px solid var(--line,#eee);">` +
+      `<b>${p.sid}</b> ${p.name}</div>`).join('') ||
+      '<div style="color:var(--muted)">无结果（需 tmp/haozhu.json 配 h5_session）</div>';
   } catch (e) { toast(e.message); }
 };
 

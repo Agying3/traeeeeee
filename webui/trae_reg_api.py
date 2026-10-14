@@ -37,7 +37,9 @@ def load_config() -> dict:
     if CONFIG.exists():
         return json.loads(CONFIG.read_text(encoding="utf-8-sig"))
     return {"workers": 1, "code_timeout_minutes": 5, "slider_retry": 2,
-            "timeout_requeue": True, "max_retries": 2}
+            "timeout_requeue": True, "max_retries": 2,
+            "continuous": {"enabled": False, "min_queue": 3, "batch": 2,
+                           "daily_max": 20, "min_balance": 5.0, "tick_s": 20}}
 
 
 # ── 队列/引擎(持久化: JSON原子写, 重启恢复 — 号是真金白银, 不能丢) ──
@@ -154,6 +156,11 @@ async def queue_remove(req: TaskIdx):
     return {"ok": True}
 
 
+def _af_cmd(task) -> list:
+    """注册链命令(测试替换点: 换成假引擎脚本即可不烧真钱全链演练)。"""
+    return [sys.executable, "-X", "utf8", str(TOOLS / "af_http.py"), str(task["proxy"])]
+
+
 @app.post("/api/engine/start")
 async def engine_start():
     if state["running"]:
@@ -163,7 +170,7 @@ async def engine_start():
     async def run_one(task):
         task["status"] = "running"
         started = time.time()
-        cmd = [sys.executable, "-X", "utf8", str(TOOLS / "af_http.py"), str(task["proxy"])]
+        cmd = _af_cmd(task)
         try:
             task["stage"] = "af_http 全链"
             proc = await asyncio.create_subprocess_exec(
@@ -233,7 +240,167 @@ async def watchdog():
 
 @app.on_event("startup")
 async def _start_watchdog():
+    cont_load()
     asyncio.get_event_loop().create_task(watchdog())
+    asyncio.get_event_loop().create_task(continuous_loop())
+
+
+# ── 连续加号(自动补号值班员; sense WatcherService 的简化移植) ──
+# 值班员不做注册链路的事——入队/跑引擎全复用现有队列机制:
+#   观察  队列 pending+running < min_queue → 缺号
+#   防线  每日上限 daily_max / 豪猪余额 min_balance / 代理池空 → 暂停留因, 恢复条件消失自动复工
+#   派活  入队 want 个任务(代理轮转, 一号一IP) → 引擎没跑就拉起
+#   记账  当日加号数跨重启保留(continuous.json, 日期翻篇自动清零)
+CONT_STATE_FILE = ROOT / "trae.cn" / "webui" / "continuous.json"
+
+cont: dict = {"added": 0, "date": "", "paused": "", "balance": None,
+              "proxy_cursor": 0, "logs": []}
+
+
+def cont_save():
+    try:
+        _atomic_write(CONT_STATE_FILE, {"added": cont["added"], "date": cont["date"],
+                                        "proxy_cursor": cont["proxy_cursor"],
+                                        "logs": cont["logs"][-50:]})
+    except Exception:
+        pass
+
+
+def cont_load():
+    try:
+        d = json.loads(CONT_STATE_FILE.read_text(encoding="utf-8-sig"))
+        cont["date"] = d.get("date") or ""
+        # 只有同一天才恢复计数(跨天由值班轮自己清零)
+        cont["added"] = int(d.get("added", 0)) if cont["date"] == time.strftime("%Y-%m-%d") else 0
+        cont["proxy_cursor"] = int(d.get("proxy_cursor", 0))
+        cont["logs"] = list(d.get("logs", []))[-50:]
+    except Exception:
+        pass
+
+
+def cont_note(msg: str):
+    line = f"[{time.strftime('%H:%M:%S')}] {msg}"
+    cont["logs"].append(line)
+    del cont["logs"][:-50]
+    log("连续加号: " + msg)
+    cont_save()
+
+
+def _proxy_total() -> int:
+    if not PROXY_FILE.exists():
+        return 0
+    return sum(1 for ln in PROXY_FILE.read_text(encoding="utf-8").splitlines()
+               if ln.strip() and not ln.strip().startswith("#"))
+
+
+def _next_proxy() -> str:
+    """代理轮转: 一号一IP轮着用(换指纹换IP约束, cursor 跨重启保留)。空池返回 ''。"""
+    n = _proxy_total()
+    if n <= 0:
+        return ""
+    idx = cont["proxy_cursor"] % n
+    cont["proxy_cursor"] += 1
+    return str(idx)
+
+
+async def continuous_loop():
+    last_tick = 0.0
+    while True:
+        await asyncio.sleep(2)  # 心跳粒度(tick_s 配置热生效, 不用等服务重启)
+        c = load_config().get("continuous", {})
+        if not c.get("enabled"):
+            continue
+        tick = max(2, int(c.get("tick_s", 20)))
+        if time.time() - last_tick < tick:
+            continue
+        last_tick = time.time()
+        try:
+            await _continuous_tick(c)
+        except Exception as e:
+            cont_note(f"值班轮异常(跳过本轮): {e}")
+
+
+async def _continuous_tick(c: dict):
+    # 日期翻篇 → 当日计数清零
+    today = time.strftime("%Y-%m-%d")
+    if cont["date"] != today:
+        cont["date"], cont["added"] = today, 0
+        cont_save()
+    daily_max = max(1, int(c.get("daily_max", 20)))
+    min_queue = max(1, int(c.get("min_queue", 3)))
+    batch = max(1, int(c.get("batch", 2)))
+    min_balance = float(c.get("min_balance", 5))
+
+    # 防线1: 今日上限
+    if cont["added"] >= daily_max:
+        if cont["paused"] != "daily":
+            cont["paused"] = "daily"
+            cont_note(f"今日加号已达上限 {cont['added']}/{daily_max}，停止补号")
+        return
+    active = sum(1 for t in state["queue"] if t["status"] in ("pending", "running"))
+    if active >= min_queue:
+        if cont["paused"] not in ("", "daily"):
+            cont_note("队列回充到位，值班恢复待命")
+        cont["paused"] = ""
+        return
+    # 防线2: 代理池空(af_http 一个任务必须一个代理索引)
+    if _proxy_total() <= 0:
+        if cont["paused"] != "proxy":
+            cont["paused"] = "proxy"
+            cont_note("代理池为空，暂停补号（每号需一IP，先去代理池页导入）")
+        return
+    # 防线3: 豪猪余额(查询失败不挡——豪猪偶发抖动不该停摆值班)
+    s = await asyncio.to_thread(_hz_summary_safe)
+    if s is not None:
+        cont["balance"] = s.get("balance")
+        if float(s.get("balance", 0) or 0) < min_balance:
+            if cont["paused"] != "balance":
+                cont["paused"] = "balance"
+                cont_note(f"豪猪余额 ¥{float(s.get('balance', 0) or 0):.2f} 低于下限 "
+                          f"¥{min_balance:.2f}，暂停补号（充值后自动恢复）")
+            return
+    # 派活: 入队(代理轮转) → 引擎没跑就拉起(worker 空闲自停, 下轮缺号再拉)
+    want = min(batch, daily_max - cont["added"], min_queue - active + 1)
+    for _ in range(want):
+        state["queue"].append({"phone": "", "proxy": _next_proxy(), "stage": "pending",
+                               "status": "pending", "cred": False, "added": time.time()})
+    cont["added"] += want
+    cont["paused"] = ""
+    queue_save()
+    cont_note(f"自动补号 +{want}（今日 {cont['added']}/{daily_max}，队列 {active}→{active + want}）")
+    if not state["running"]:
+        await engine_start()
+
+
+@app.get("/api/continuous")
+async def continuous_get():
+    c = load_config().get("continuous", {})
+    active = sum(1 for t in state["queue"] if t["status"] in ("pending", "running"))
+    return {"config": c, "added_today": cont["added"], "date": cont["date"],
+            "paused": cont["paused"], "balance": cont["balance"],
+            "queue_active": active, "proxy_total": _proxy_total(),
+            "logs": cont["logs"][-15:]}
+
+
+class ContConfig(BaseModel):
+    enabled: bool = False
+    min_queue: int = 3
+    batch: int = 2
+    daily_max: int = 20
+    min_balance: float = 5.0
+    tick_s: int = 20
+
+
+@app.post("/api/continuous")
+async def continuous_set(c: ContConfig):
+    cfg = load_config()
+    cfg["continuous"] = {"enabled": c.enabled, "min_queue": max(1, c.min_queue),
+                         "batch": max(1, c.batch), "daily_max": max(1, c.daily_max),
+                         "min_balance": max(0.0, c.min_balance), "tick_s": max(2, c.tick_s)}
+    CONFIG.parent.mkdir(parents=True, exist_ok=True)
+    CONFIG.write_text(json.dumps(cfg, ensure_ascii=False, indent=1), encoding="utf-8")
+    cont_note("配置已更新，值班" + ("启动" if c.enabled else "停用"))
+    return {"ok": True}
 
 
 # ── 指标聚合(事件流水→时间窗现算) ────────────────────────
@@ -276,47 +443,82 @@ async def engine_stop():
     return {"ok": True}
 
 
-# ── 豪猪(真连接: 余额/占用/项目) ────────────────────────
+# ── 豪猪(真连接: haozhu_sms 客户端直连 api.haozhuma.com) ──
 def _hz_client():
     sys.path.insert(0, str(TOOLS))
     import haozhu_sms as hz
     return hz
 
 
-@app.get("/api/haozhu/config")
-async def haozhu_get():
+def _hz_summary_safe():
+    """豪猪余额/占用(尽力而为; 缺凭据或网络抖动返回 None, 不挡任何页面)。
+    测试替换点: 指向假余额即可演练余额防线。"""
     try:
         hz = _hz_client()
-        cfg = hz.load_config()
-        balance, holding = "", 0
-        try:  # 余额真数据(失败不挡页面)
-            bal = hz.get_balance() if hasattr(hz, "get_balance") else None
-            balance = str(bal) if bal is not None else ""
-        except Exception:
-            pass
-        return {"user": cfg.get("user", ""), "sid": cfg.get("sid", ""),
-                "balance": balance, "holding": holding}
-    except Exception as e:
-        return {"user": "", "sid": "", "error": str(e)[:120]}
+        creds = hz.load_credentials()
+        if not (creds.get("user") and creds.get("password") and creds.get("sid")):
+            return None
+        cli = hz.HaozhuClient(creds["user"], creds["password"], creds["sid"],
+                              token=creds.get("token", ""), uid=creds.get("uid", ""))
+        return cli.summary()
+    except Exception:
+        return None
+
+
+@app.get("/api/haozhu/config")
+async def haozhu_get():
+    hz = _hz_client()
+    try:
+        creds = hz.load_credentials()
+    except Exception:
+        creds = {}
+    s = await asyncio.to_thread(_hz_summary_safe)
+    return {"user": creds.get("user", ""), "sid": creds.get("sid", ""),
+            "uid": creds.get("uid", ""),
+            "balance": (s or {}).get("balance", "") if s else "",
+            "occupied": (s or {}).get("occupied", "") if s else "",
+            "configured": bool(creds.get("user") and creds.get("password") and creds.get("sid"))}
 
 
 class HzConfig(BaseModel):
     user: str = ""
     pass_: str = ""
     sid: str = ""
+    uid: str = ""
 
 
 @app.post("/api/haozhu/config")
 async def haozhu_set(c: HzConfig):
-    sys.path.insert(0, str(TOOLS))
-    import haozhu_sms as hz
-    cfg = hz.load_config()
-    cfg["user"] = c.user or cfg.get("user", "")
-    cfg["sid"] = c.sid or cfg.get("sid", "")
+    """写回 tmp/haozhu.json(haozhu_sms 的凭据文件), token/h5_session 等字段保留。"""
+    hz = _hz_client()
+    creds = hz.load_credentials()
+    if c.user:
+        creds["user"] = c.user
+    if c.sid:
+        creds["sid"] = c.sid
+    if c.uid:
+        creds["uid"] = c.uid
     if c.pass_:
-        cfg["pass"] = c.pass_
-    hz.save_config(cfg)
+        creds["password"] = c.pass_
+    hz.CRED_FILE.parent.mkdir(parents=True, exist_ok=True)
+    hz.CRED_FILE.write_text(json.dumps(creds, ensure_ascii=False, indent=1), encoding="utf-8")
+    log("豪猪配置已保存")
     return {"ok": True}
+
+
+@app.get("/api/haozhu/search")
+async def haozhu_search(kw: str = ""):
+    """H5 项目搜索(找 sid 用); 需要 tmp/haozhu.json 里的 h5_session。"""
+    kw = (kw or "").strip()
+    if len(kw) < 2:
+        raise HTTPException(400, "关键词至少两个字符")
+    hz = _hz_client()
+    sess = hz.load_credentials().get("h5_session", "")
+    try:
+        items = hz.h5_projects(sess, kw)
+    except hz.HaozhuError as e:
+        raise HTTPException(400, str(e)[:120])
+    return {"items": [{"sid": p.sid, "project_id": p.project_id, "name": p.name} for p in items]}
 
 
 # ── 凭证库 ──────────────────────────────────────────────
