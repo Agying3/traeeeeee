@@ -79,7 +79,7 @@
     outline:none; }
   textarea { min-height:96px; resize:vertical; font-family:Consolas,monospace; }
   label small { display:block; color:var(--muted); margin-bottom:5px; }
-  .app { display:grid; grid-template-columns:220px 1fr; min-height:100vh; }
+  .app { display:grid; grid-template-columns:220px minmax(0,1fr); min-height:100vh; }
   /* 侧栏: 外挂 .sidebar L287-331(玻璃白+blur18) */
   aside { background: rgb(255 255 255 / 0.92);
           backdrop-filter: blur(18px);
@@ -105,7 +105,7 @@
                     color: var(--luoyv-brand-strong); font-weight:500;
                     box-shadow: 0 12px 28px rgb(194 65 12 / 0.1); }
   aside button.on:hover:not(:disabled) { transform:none; }
-  main { padding:28px 32px 48px; max-width:1180px; }
+  main { padding:28px clamp(20px,2.2vw,40px) 48px; width:100%; min-width:0; }
   .page { display:none; } .page.on { display:block; }
   h1 { font-size:24px; margin:0 0 6px; } .lead { color:var(--muted); margin:0 0 22px; }
   .grid { display:grid; gap:16px; }
@@ -155,6 +155,66 @@
   #toast { position:fixed; right:24px; bottom:24px; z-index:9; display:none;
            background:#12231d; color:#fff; border-radius:10px; padding:10px 16px;
            box-shadow:var(--shadow); max-width:420px; }
+  #haozhu { --hz-divider:rgb(100 116 139 / .16); }
+  #haozhu h1 { font-size:28px; letter-spacing:-.5px; }
+  #haozhu > .lead { margin-bottom:24px; }
+  #haozhu .card { min-width:0; padding:24px; border-radius:16px;
+    border-color:rgb(148 163 184 / .2); background:rgb(255 255 255 / .94);
+    box-shadow:0 4px 20px rgb(15 23 42 / .035); }
+  #haozhu .card h2 { font-size:17px; margin-bottom:18px; }
+  #haozhu .card h3 { font-size:14px; margin:24px 0 10px; }
+  #haozhu .card p { font-size:13px; line-height:1.7; }
+  #haozhu .grid { gap:20px; align-items:start; }
+  #haozhu .hz-workspace { grid-template-columns:minmax(300px,.8fr) minmax(0,1.6fr); }
+  #haozhu .hz-catalog { grid-template-columns:minmax(0,1fr); }
+  #haozhu .cols-2 { grid-template-columns:minmax(0,1fr) minmax(0,1fr); }
+  #haozhu label { display:block; min-width:0; color:#475569; font-size:13px; font-weight:500; }
+  #haozhu label > input:not([type=checkbox]), #haozhu label > textarea,
+  #haozhu label > select { margin-top:6px; }
+  #haozhu input, #haozhu select, #haozhu textarea { border-radius:9px; background:#fbfcfd; }
+  #haozhu input[type=checkbox] { accent-color:var(--accent); }
+  #haozhu button { border-radius:9px; box-shadow:none; padding:9px 14px; }
+  #haozhu button.secondary { background:#fff; border-color:#dce2e9; }
+  #haozhu .row { gap:10px; flex-wrap:wrap; }
+  #haozhu .row > label { flex:1 1 180px; }
+  #haozhu .row > button { max-width:100%; white-space:normal; }
+  #haozhu .metrics-row { grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:12px;
+    background:none; border:0; border-radius:0; box-shadow:none; margin-bottom:22px; }
+  #haozhu .metric { border:1px solid rgb(136 156 190 / .2); border-radius:12px;
+    background:linear-gradient(110deg,#edf3ff 0%,#f1effc 48%,#e5f4f0 100%);
+    background-size:calc(var(--metric-count,1) * 100%) 100%;
+    background-position:var(--metric-position,0%) 0;
+    box-shadow:0 3px 12px rgb(40 60 95 / .035); padding:20px 24px; min-width:0; }
+  #haozhu .metric small { font-size:12px; color:#596879; }
+  #haozhu .metric b { font-size:26px; margin-top:8px; font-weight:650;
+    letter-spacing:-.5px; overflow-wrap:anywhere; font-variant-numeric:tabular-nums; }
+  #haozhu #ledger-metrics .metric { padding:16px 20px; }
+  #haozhu #ledger-metrics .metric b { font-size:22px; }
+  #haozhu table { font-size:13px; }
+  #haozhu th { padding:12px; background:#f7f9fb; color:#687587; white-space:nowrap; }
+  #haozhu td { padding:14px 12px; }
+  #haozhu tbody tr:hover { background:#fafbfc; }
+  #hz-session-state { padding:12px 14px; border-radius:9px; background:#f4f7fa; line-height:1.75; }
+  #hz-session-feedback:empty, #hz-channel-summary:empty { display:none; }
+  #hz-channel-summary { font-weight:500; color:#475569; }
+  @media (max-width:1100px) {
+    .app { grid-template-columns:190px minmax(0,1fr); }
+    #haozhu .cols-2, #haozhu .hz-workspace { grid-template-columns:minmax(0,1fr); }
+    #haozhu .metric { padding:16px; }
+  }
+  @media (max-width:640px) {
+    .app { grid-template-columns:120px minmax(0,1fr); }
+    aside { padding:14px 8px; }
+    aside strong { padding:10px 6px; font-size:14px; }
+    aside button { padding:10px 8px; font-size:12px; }
+    main { padding:20px 12px 32px; }
+    #haozhu h1 { font-size:24px; }
+    #haozhu .card { padding:16px; border-radius:12px; }
+    #haozhu .metrics-row { grid-template-columns:repeat(2,minmax(0,1fr)); }
+    #haozhu .metric { padding:14px 12px; }
+    #haozhu .metric b { font-size:22px; }
+    #haozhu .row > label, #haozhu .row > button { flex:1 1 100%; }
+  }
 </style>
 </head>
 <body>
@@ -258,26 +318,7 @@
     <h1>豪猪接码</h1>
     <p class="lead">取号与收码的账号配置（凭据只存本机 data/）</p>
     <div class="metrics-row" id="haozhu-metrics"></div>
-    <div class="card" style="margin-bottom:16px;">
-      <h2>号码生命周期与预算</h2>
-      <p class="lead">接到码才产生平台计费条件；注册成功单独统计。预算按收码证据与入场单价估算，实际扣费以平台流水为准。</p>
-      <div class="metrics-row" id="ledger-metrics"></div>
-      <p id="ledger-balance" style="color:var(--muted)"></p>
-      <div class="row" style="flex-wrap:wrap;">
-        <button id="btn-hz-refresh" class="secondary">刷新平台余额</button>
-        <button id="btn-hz-recover" class="secondary">恢复清理遗留号码</button>
-        <label>追加预算（¥）<input id="budget-add" type="number" min="0.01" step="0.01" value="10"></label>
-        <button id="btn-budget-add" class="secondary">追加额度</button>
-      </div>
-      <p id="ledger-note" style="color:var(--muted)"></p>
-      <div style="overflow:auto"><table><thead><tr><th>号码</th><th>尝试</th><th>状态</th><th>项目/渠道</th><th>收码来源</th><th>错误</th></tr></thead>
-        <tbody id="held-body"></tbody></table></div>
-      <h3>待核对预算</h3>
-      <p style="color:var(--muted)">核对平台收码记录后填写依据；已存在平台收码证据的尝试会保留收码估算。</p>
-      <div style="overflow:auto"><table><thead><tr><th>尝试</th><th>预留</th><th>核对结果</th><th>依据</th><th>操作</th></tr></thead><tbody id="unresolved-body"></tbody></table></div>
-      <details style="margin-top:14px"><summary>审计事件（最近100条）</summary><div id="ledger-events" class="logs" style="margin-top:10px"></div></details>
-    </div>
-    <div class="grid cols-2">
+    <div class="grid hz-workspace">
       <div class="card">
         <h2>鉴权</h2>
         <label>豪猪账号
@@ -307,10 +348,11 @@
         <label style="margin-top:10px;">对接码池（每行一个，取号失败自动换下一个）
           <textarea id="hz-uids" placeholder="每行一个对接码&#10;如:&#10;168392&#10;170255" style="min-height:90px;font-family:Consolas,monospace;"></textarea>
         </label>
-        <button id="btn-hz-save" style="margin-top:12px;">保存</button>
+        <button id="btn-hz-save" style="margin-top:12px;">保存配置</button>
       </div>
+      <div class="grid hz-catalog">
       <div class="card">
-        <h2>项目</h2>
+        <h2>搜索项目</h2>
         <label>项目关键词
           <input id="hz-proj-key" placeholder="Trae">
         </label>
@@ -323,8 +365,7 @@
           <button id="btn-hz-mine" class="secondary">我的对接码</button>
         </div>
       </div>
-    </div>
-    <div class="card" style="margin-top:16px;">
+      <div class="card">
       <h2>对接码渠道</h2>
       <p style="color:var(--muted)">先查询价格与库存，按需加入豪猪账户，再勾选保存到本地轮换池。取号使用数字项目 ID；查询标识只用于搜索渠道。保存本地配置后仍需启动注册任务。</p>
       <div class="row" style="flex-wrap:wrap;align-items:center;gap:16px;">
@@ -339,8 +380,29 @@
         <button id="btn-hz-select">保存所选到本地渠道池</button>
         <button id="btn-hz-clear" class="secondary">清空本地渠道池</button>
       </div>
+      </div>
+      </div>
     </div>
-    <div class="card" style="margin-top:16px;">
+    <div class="card" style="margin-top:20px;">
+      <h2>号码生命周期与预算</h2>
+      <p class="lead">接到码才产生平台计费条件；注册成功单独统计。预算按收码证据与入场单价估算，实际扣费以平台流水为准。</p>
+      <div class="metrics-row" id="ledger-metrics"></div>
+      <p id="ledger-balance" style="color:var(--muted)"></p>
+      <div class="row" style="flex-wrap:wrap;">
+        <button id="btn-hz-refresh" class="secondary">刷新平台余额</button>
+        <button id="btn-hz-recover" class="secondary">恢复清理遗留号码</button>
+        <label>追加预算（¥）<input id="budget-add" type="number" min="0.01" step="0.01" value="10"></label>
+        <button id="btn-budget-add" class="secondary">追加额度</button>
+      </div>
+      <p id="ledger-note" style="color:var(--muted)"></p>
+      <div style="overflow:auto"><table><thead><tr><th>号码</th><th>尝试</th><th>状态</th><th>项目/渠道</th><th>收码来源</th><th>错误</th></tr></thead>
+        <tbody id="held-body"></tbody></table></div>
+      <h3>待核对预算</h3>
+      <p style="color:var(--muted)">核对平台收码记录后填写依据；已存在平台收码证据的尝试会保留收码估算。</p>
+      <div style="overflow:auto"><table><thead><tr><th>尝试</th><th>预留</th><th>核对结果</th><th>依据</th><th>操作</th></tr></thead><tbody id="unresolved-body"></tbody></table></div>
+      <details style="margin-top:14px"><summary>审计事件（最近100条）</summary><div id="ledger-events" class="logs" style="margin-top:10px"></div></details>
+    </div>
+    <div class="card" style="margin-top:20px;">
       <h2>连续加号（自动补号值班）</h2>
       <p style="color:var(--muted);font-size:13px;margin:4px 0 10px;">
         队列缺号自动补：豪猪取号入队 + 自动拉起引擎。触发线/每日上限/余额下限三道防线，暂停原因自动恢复。
@@ -503,8 +565,8 @@ async function api(path, opts) {
   return r.json();
 }
 function metric(el, items) {
-  el.innerHTML = items.map(([k, v, cls]) =>
-    `<div class="metric"><small>${esc(k)}</small><b class="${esc(cls||'')}">${esc(v)}</b></div>`).join('');
+  el.innerHTML = items.map(([k, v, cls], i) =>
+    `<div class="metric" style="--metric-count:${items.length};--metric-position:${i * 100 / Math.max(1, items.length - 1)}%"><small>${esc(k)}</small><b class="${esc(cls||'')}">${esc(v)}</b></div>`).join('');
 }
 
 /* ── 导航 ── */
