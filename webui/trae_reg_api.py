@@ -322,7 +322,8 @@ async def _start_watchdog():
         except Exception as error:
             ENGINE.pause("启动恢复待重试: " + type(error).__name__)
     BACKGROUND_TASKS.extend([asyncio.create_task(watchdog()),
-                             asyncio.create_task(continuous_loop())])
+                             asyncio.create_task(continuous_loop()),
+                             asyncio.create_task(haozhu_keepalive())])
     log("注册机服务就绪")
 
 
@@ -566,6 +567,18 @@ def _hz_catalog_module():
     return haozhu_catalog
 
 
+async def haozhu_keepalive():
+    while True:
+        await asyncio.sleep(60)
+        catalog = _hz_catalog_module()
+        if os.environ.get("TRAE_HAOZHU_CATALOG_DISABLED") == "1":
+            continue
+        try:
+            await asyncio.to_thread(lambda: catalog.get_client().keepalive_if_due())
+        except catalog.CatalogError:
+            log("豪猪 H5 保活失败，请在豪猪配置中查看会话状态")
+
+
 @app.get("/api/haozhu/config")
 async def haozhu_get():
     hz = _hz_client()
@@ -580,6 +593,7 @@ async def haozhu_get():
             "balance": PROTECTION.cached_balance if PROTECTION.cached_balance is not None else "",
             "configured": bool(creds.get("user") and creds.get("password") and creds.get("sid")),
             "h5_configured": bool(creds.get("h5_session")),
+            "h5": await asyncio.to_thread(lambda: catalog.get_client().info()),
             "token_configured": bool(creds.get("token")),
             "catalog_paused": os.environ.get("TRAE_HAOZHU_CATALOG_DISABLED") == "1",
             "provider_paused": os.environ.get("TRAE_REGISTRATION_DISABLED") == "1"}
@@ -604,17 +618,32 @@ async def haozhu_set(c: HzConfig):
         changes["token"] = c.token
     catalog = _hz_catalog_module()
     try:
-        result = catalog.save_config(changes)
+        result = await asyncio.to_thread(catalog.save_config, changes)
     except catalog.CatalogError as error:
         raise HTTPException(error.status, str(error))
     log("豪猪配置已保存")
     return result
 
 
+class HzSession(BaseModel):
+    session: str = Field(max_length=256)
+
+
+@app.post("/api/haozhu/session")
+async def haozhu_session(c: HzSession):
+    catalog = _hz_catalog_module()
+    try:
+        await asyncio.to_thread(catalog.save_config, {"h5_session": c.session})
+    except catalog.CatalogError as error:
+        raise HTTPException(error.status, str(error))
+    return {"ok": True, "cleared": not c.session.strip(),
+            "h5": await asyncio.to_thread(lambda: catalog.get_client().info())}
+
+
 async def _catalog_call(method, *args, **kwargs):
     catalog = _hz_catalog_module()
     try:
-        return await asyncio.to_thread(getattr(catalog.Catalog(), method), *args, **kwargs)
+        return await asyncio.to_thread(lambda: getattr(catalog.get_client(), method)(*args, **kwargs))
     except catalog.CatalogError as error:
         raise HTTPException(error.status, str(error))
 

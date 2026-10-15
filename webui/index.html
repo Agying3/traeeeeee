@@ -290,6 +290,11 @@
         <label style="margin-top:10px;">H5 PHPSESSID（项目与渠道查询）
           <input id="hz-session" type="password" autocomplete="off" placeholder="只粘贴 Cookie 中 PHPSESSID 的值，留空保留">
         </label>
+        <div class="row" style="margin-top:10px;">
+          <button id="btn-hz-session-save" class="secondary">验证并保存会话</button>
+          <button id="btn-hz-session-clear" class="secondary">清空会话</button>
+        </div>
+        <p id="hz-session-feedback" role="status" aria-live="polite"></p>
         <p id="hz-session-state" style="color:var(--muted)"></p>
         <label style="margin-top:10px;">SID（项目ID）
           <input id="hz-sid" placeholder="58562">
@@ -587,7 +592,10 @@ async function loadHaozhu() {
       $('hz-sid').value = c.sid || ''; $('hz-uid').value = c.uid || '';
       $('hz-uids').value = c.uids || '';
     }
-    $('hz-session-state').textContent = (c.h5_configured ? 'H5 会话已配置' : '请从豪猪 H5 登录后的 Cookie 复制 PHPSESSID 值，填写后点击保存') +
+    const h5 = c.h5 || {has:c.h5_configured};
+    $('hz-session-state').textContent = (h5.has ? (h5.expired ? 'H5 会话已失效，请重新导入' : 'H5 会话已配置 · 自动保活已开启（7 天）') : '请从豪猪 H5 登录后的 Cookie 复制 PHPSESSID 值，填写后点击验证并保存') +
+      (h5.last_seen ? ' · 最近成功：' + new Date(h5.last_seen).toLocaleString() : '') +
+      (h5.last_error ? ' · ' + h5.last_error : '') +
       (c.catalog_paused ? ' · 目录查询已暂停（离线模式）' : ' · 项目和渠道只读查询已开放') +
       (c.provider_paused ? ' · 取号、注册和加入平台账户仍暂停' : '');
     if (!hzSearchRequest) $('hz-project-status').textContent = c.catalog_paused ? '目录查询已暂停（离线模式）' :
@@ -648,14 +656,47 @@ async function loadLedger(force = false) {
 $('btn-hz-refresh').onclick = async () => { try { await api('/haozhu/refresh',{method:'POST'}); await loadHaozhu(); toast('余额快照已保存'); } catch(e) { toast(e.message); } };
 $('btn-hz-recover').onclick = async () => { try { await api('/haozhu/recover',{method:'POST'}); await loadLedger(); toast('恢复清理完成，未确认结果保留待清理'); } catch(e) { toast(e.message); } };
 $('btn-budget-add').onclick = async () => { try { await api('/haozhu/budget',{method:'POST',body:JSON.stringify({amount:+$('budget-add').value})}); await loadLedger(); toast('预算额度已追加'); } catch(e) { toast(e.message); } };
+function resetHzCatalog(message) {
+  ++hzSearchRequest; ++hzChannelRequest; hzChannels = [];
+  $('hz-projects').replaceChildren(); $('hz-channel-body').replaceChildren();
+  $('hz-catalog-sid').value = ''; $('hz-channel-status').textContent = '';
+  $('hz-project-status').textContent = message;
+  $('btn-hz-search').disabled = false; $('btn-hz-search').textContent = '搜索项目';
+}
+async function saveHzSession(clear = false) {
+  const value = clear ? '' : $('hz-session').value.trim();
+  if (!clear && !value) { $('hz-session-feedback').textContent = '请先填写 PHPSESSID 的值'; return; }
+  const save = $('btn-hz-session-save'), remove = $('btn-hz-session-clear');
+  save.disabled = remove.disabled = true;
+  $('hz-session-feedback').textContent = clear ? '正在清空会话…' : '正在验证会话，成功后保存…';
+  try {
+    await api('/haozhu/session', {method:'POST',body:JSON.stringify({session:value})});
+    $('hz-session').value = '';
+    $('hz-session-feedback').textContent = clear ? 'H5 会话已清空' : 'H5 会话验证通过，已保存并开启自动保活';
+    resetHzCatalog(clear ? '请先导入 H5 会话再搜索项目' : '会话已更新，请重新搜索项目');
+    await loadHaozhu();
+  } catch(e) { $('hz-session-feedback').textContent = '会话操作失败：' + e.message; }
+  finally { save.disabled = remove.disabled = false; }
+}
+$('btn-hz-session-save').onclick = () => saveHzSession();
+$('btn-hz-session-clear').onclick = () => saveHzSession(true);
 $('btn-hz-save').onclick = async () => {
   const body = {user: $('hz-user').value, pass: $('hz-pass').value,
     token: $('hz-token').value, sid: $('hz-sid').value, uid: $('hz-uid').value,
     uids: $('hz-uids').value};
   if ($('hz-session').value.trim()) body.h5_session = $('hz-session').value.trim();
+  $('btn-hz-save').disabled = true;
+  if (body.h5_session) $('hz-session-feedback').textContent = '正在验证会话，成功后保存…';
   try { await api('/haozhu/config', {method: 'POST', body: JSON.stringify(body)});
+    if (body.h5_session) {
+      $('hz-session-feedback').textContent = 'H5 会话验证通过，已保存并开启自动保活';
+      resetHzCatalog('会话已更新，请重新搜索项目');
+    }
     hzDraft = false; toast('豪猪配置已保存'); await loadHaozhu();
-  } catch (e) { toast(e.message); }
+  } catch (e) {
+    if (body.h5_session) $('hz-session-feedback').textContent = '会话验证失败：' + e.message;
+    toast(e.message);
+  } finally { $('btn-hz-save').disabled = false; }
 };
 $('btn-ct-save').onclick = async () => {
   try { await api('/continuous', {method: 'POST', body: JSON.stringify({

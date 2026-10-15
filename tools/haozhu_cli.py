@@ -4,14 +4,14 @@ import getpass
 import json
 
 import haozhu_sms as hz
-from haozhu_catalog import Catalog, CatalogError, save_config, select_channels, uid_list
+from haozhu_catalog import CatalogError, get_client, save_config, select_channels, uid_list
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Haozhu projects and channel management")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("status", help="Show local configuration status without secrets")
-    session = sub.add_parser("session", help="Save H5 PHPSESSID using hidden input")
+    session = sub.add_parser("session", help="Validate H5 PHPSESSID before saving (hidden input)")
     session.add_argument("--clear", action="store_true")
     sub.add_parser("search", help="Search projects").add_argument("keyword")
     sub.add_parser("uids", help="List market channels, prices and stock").add_argument("sid")
@@ -26,16 +26,17 @@ def main(argv=None):
         if args.command == "status":
             creds = hz.load_credentials()
             result = {"sid": creds.get("sid", ""), "uids": uid_list(creds.get("uids", "")),
-                      "uid": creds.get("uid", ""), "h5_configured": bool(creds.get("h5_session"))}
+                      "uid": creds.get("uid", ""), "h5_configured": bool(creds.get("h5_session")),
+                      "h5": get_client().info()}
         elif args.command == "session":
             value = "" if args.clear else getpass.getpass("H5 PHPSESSID: ").strip()
             if not args.clear and not value:
                 parser.error("PHPSESSID is empty")
-            result = save_config({"h5_session": value})
+            result = {**save_config({"h5_session": value}), "cleared": args.clear, "h5": get_client().info()}
         elif args.command == "select":
             result = select_channels(args.sid, args.uids, args.append)
         else:
-            client = Catalog()
+            client = get_client()
             if args.command == "search":
                 result = {"items": client.projects(args.keyword)}
             elif args.command == "uids":

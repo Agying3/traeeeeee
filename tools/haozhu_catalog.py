@@ -5,6 +5,8 @@ import os
 import re
 import sys
 import threading
+import time
+from copy import deepcopy
 from pathlib import Path
 
 import requests
@@ -14,7 +16,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from runtime import atomic_json
 
 BASE = "https://h5.haozhuma.com/api.php"
+CACHE_TTL = 5 * 60
+KEEPALIVE_INTERVAL = 7 * 24 * 60 * 60
 _LOCK = threading.RLock()
+_SHARED_CLIENT = None
+_SHARED_PATH = None
 
 
 class CatalogError(Exception):
@@ -29,7 +35,13 @@ def uid_list(value):
 
 
 def save_config(changes):
+    changes = dict(changes)
     with _LOCK:
+        if changes.get("h5_session") is not None:
+            value = str(changes["h5_session"]).strip()
+            if value:
+                Catalog(session=value).projects("腾讯")
+            changes["h5_session"] = value
         try:
             data = json.loads(hz.CRED_FILE.read_text(encoding="utf-8-sig")) if hz.CRED_FILE.exists() else {}
         except (OSError, ValueError) as error:
@@ -43,6 +55,11 @@ def save_config(changes):
                 value = ",".join(uid_list(value))
             data[key] = value.strip() if isinstance(value, str) and key != "password" else value
         atomic_json(hz.CRED_FILE, data)
+        if changes.get("h5_session") is not None:
+            client = get_client()
+            client.set_session(client.session, force=True)
+            if client.session and client.session == changes["h5_session"]:
+                client.mark_success()
     return {"ok": True}
 
 
@@ -84,8 +101,33 @@ class Catalog:
     def __init__(self, session=None, http=None):
         self.session = str(session if session is not None else hz.load_credentials().get("h5_session", "")).strip()
         self.http = http or requests
+        self.lock = threading.RLock()
+        self.cache = {}
+        self.expired = False
+        self.last_seen = None
+        self.last_error = ""
+        self.last_activity = time.monotonic()
 
-    def call(self, kind, **params):
+    def set_session(self, session, force=False):
+        with self.lock:
+            session = str(session or "").strip()
+            if force or session != self.session:
+                self.session = session
+                self.cache.clear()
+                self.expired, self.last_seen, self.last_error = False, None, ""
+                self.last_activity = time.monotonic()
+
+    def info(self):
+        with self.lock:
+            return {"has": bool(self.session), "expired": self.expired,
+                    "last_seen": self.last_seen, "last_error": self.last_error}
+
+    def mark_success(self):
+        self.last_seen = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        self.last_activity = time.monotonic()
+        self.expired, self.last_error = False, ""
+
+    def _check(self, kind):
         # {意图：注册暂停仍允许浏览目录；完全离线由目录开关单独控制，加入渠道仍受注册暂停限制。}
         if os.environ.get("TRAE_HAOZHU_CATALOG_DISABLED") == "1":
             raise CatalogError("豪猪目录查询已暂停（离线模式）", 409)
@@ -93,12 +135,38 @@ class Catalog:
             raise CatalogError("注册已暂停，加入豪猪账户操作也已暂停", 409)
         if not self.session:
             raise CatalogError("请先填写并保存豪猪 H5 PHPSESSID，再搜索项目或查询渠道", 503)
-        if re.search(r"[;\s]", self.session):
-            raise CatalogError("Paste only the PHPSESSID value", 400)
+        if len(self.session) > 256 or re.search(r"[;\s]", self.session):
+            raise CatalogError("请只粘贴 PHPSESSID 的值，不含名称或其他 Cookie", 400)
+
+    def call(self, kind, **params):
+        with self.lock:
+            self._check(kind)
+            key = (kind, tuple(sorted(params.items())))
+            cached = self.cache.get(key)
+            if kind in (30, 8, 3) and cached and time.monotonic() - cached[0] < CACHE_TTL:
+                return deepcopy(cached[1])
+            try:
+                data = self._request(kind, params)
+            except CatalogError as error:
+                self.last_error = str(error)
+                if error.status == 410:
+                    self.expired = True
+                    self.cache.clear()
+                raise
+            self.mark_success()
+            if kind in (30, 8, 3):
+                if len(self.cache) >= 128:
+                    self.cache.pop(next(iter(self.cache)))
+                self.cache[key] = (time.monotonic(), deepcopy(data))
+            elif kind == 4:
+                self.cache.clear()
+            return data
+
+    def _request(self, kind, params):
         try:
             response = self.http.get(BASE, params={"type": str(kind), **params},
                 headers={"Cookie": "PHPSESSID=" + self.session, "Accept": "application/json"},
-                timeout=20, allow_redirects=False)
+                timeout=15, allow_redirects=False)
             if response.status_code != 200:
                 raise CatalogError("Haozhu H5 HTTP " + str(response.status_code))
             data = response.json()
@@ -113,7 +181,30 @@ class Catalog:
             return {"data": []}
         if code not in ("1", "200") and not (kind != 4 and code == "0"):
             raise CatalogError("Haozhu H5: " + message.replace(self.session, "[redacted]")[:160])
+        if kind in (30, 8, 3):
+            rows = data.get("data")
+            if rows not in (None, "") and (not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows)):
+                raise CatalogError("Haozhu H5 data must be a list")
         return data
+
+    def keepalive_if_due(self, now=None):
+        with self.lock:
+            now = time.monotonic() if now is None else now
+            if not self.session or now - self.last_activity < KEEPALIVE_INTERVAL:
+                return False
+            self._check(0)
+            self.last_activity = now
+            try:
+                response = self.http.get(BASE.rsplit("/", 1)[0] + "/time.php",
+                    headers={"Cookie": "PHPSESSID=" + self.session}, timeout=15, allow_redirects=False)
+                if response.status_code != 200:
+                    raise CatalogError("Haozhu H5 HTTP " + str(response.status_code))
+            except (requests.RequestException, CatalogError) as error:
+                self.last_error = "H5 会话保活失败，请检查连接或重新验证会话"
+                raise CatalogError(self.last_error) from error
+            # {意图：time.php 仅证明连接成功，不能清除项目接口确认的会话失效状态。}
+            self.last_seen = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+            return True
 
     def rows(self, kind, **params):
         data = self.call(kind, **params).get("data")
@@ -160,3 +251,15 @@ class Catalog:
             raise CatalogError("Invalid channel UID", 400)
         self.call(4, djm=uid)
         return {"added": uid}
+
+
+def get_client():
+    global _SHARED_CLIENT, _SHARED_PATH
+    with _LOCK:
+        path = str(hz.CRED_FILE.resolve())
+        session = str(hz.load_credentials().get("h5_session", "") or "").strip()
+        if _SHARED_CLIENT is None or path != _SHARED_PATH:
+            _SHARED_CLIENT, _SHARED_PATH = Catalog(session=session), path
+        else:
+            _SHARED_CLIENT.set_session(session)
+        return _SHARED_CLIENT
