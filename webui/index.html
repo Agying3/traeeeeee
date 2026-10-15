@@ -325,8 +325,14 @@
     <div class="card" style="margin-top:16px;">
       <h2>对接码渠道</h2>
       <p style="color:var(--muted)">先查询价格与库存，按需加入豪猪账户，再勾选保存到本地轮换池。取号使用数字项目 ID；查询标识只用于搜索渠道。保存本地配置后仍需启动注册任务。</p>
+      <div class="row" style="flex-wrap:wrap;align-items:center;gap:16px;">
+        <label>排序 <select id="hz-channel-sort"><option value="price">价格：低 → 高</option><option value="price-desc">价格：高 → 低</option><option value="stock">库存：多 → 少</option><option value="stock-asc">库存：少 → 多</option><option value="default">默认（置顶 / 库存）</option></select></label>
+        <label><input id="hz-normal-only" type="checkbox" style="width:auto;"> 只看正常号</label>
+      </div>
+      <p style="color:var(--muted)">正常号以平台号段类型为准；混合、虚拟及未知类型不计入。未知价格与库存排在末尾，库存 0 表示暂无可用号。</p>
       <p id="hz-channel-status" role="status"></p>
-      <div style="overflow:auto"><table><thead><tr><th>选择</th><th>UID / 项目</th><th>单价（元）</th><th>库存</th><th>运营商 / 省份</th><th>状态</th><th>操作</th></tr></thead><tbody id="hz-channel-body"></tbody></table></div>
+      <p id="hz-channel-summary" role="status" aria-live="polite"></p>
+      <div style="overflow:auto"><table><thead><tr><th>选择</th><th>UID / 项目</th><th>单价（元）</th><th>库存</th><th>号段类型 / 号段</th><th>运营商 / 省份</th><th>状态</th><th>操作</th></tr></thead><tbody id="hz-channel-body"></tbody></table></div>
       <div class="row" style="margin-top:12px;flex-wrap:wrap;">
         <button id="btn-hz-select">保存所选到本地渠道池</button>
         <button id="btn-hz-clear" class="secondary">清空本地渠道池</button>
@@ -500,10 +506,15 @@ function metric(el, items) {
 }
 
 /* ── 导航 ── */
-document.querySelectorAll('aside button').forEach(b => b.onclick = () => {
-  document.querySelectorAll('aside button').forEach(x => x.classList.toggle('on', x === b));
-  document.querySelectorAll('.page').forEach(p => p.classList.toggle('on', p.id === b.dataset.page));
-});
+function showPage(id) {
+  if (!Object.hasOwn(loaders, id)) id = 'work';
+  document.querySelectorAll('aside button[data-page]').forEach(b => b.classList.toggle('on', b.dataset.page === id));
+  document.querySelectorAll('.page').forEach(p => p.classList.toggle('on', p.id === id));
+  history.replaceState(null, '', '#' + id);
+  loadCurrent();
+}
+document.querySelectorAll('aside button[data-page]').forEach(b => b.onclick = () => showPage(b.dataset.page));
+window.addEventListener('hashchange', () => showPage(location.hash.slice(1)));
 
 /* ── 工作台 ── */
 async function loadWork() {
@@ -580,6 +591,7 @@ $('btn-engine-stop').onclick = async () => { try { await api('/engine/stop', {me
 /* ── 豪猪 ── */
 const PAUSE_TEXT = {daily: '今日上限', balance: '余额不足', proxy: '代理池空'};
 let hzDraft = false, hzChannels = [], hzSearchRequest = 0, hzChannelRequest = 0;
+let hzChosenChannels = new Set();
 for (const id of ['hz-user','hz-pass','hz-token','hz-session','hz-sid','hz-uid','hz-uids']) {
   $(id).addEventListener('input', () => { hzDraft = true; });
 }
@@ -657,7 +669,8 @@ $('btn-hz-refresh').onclick = async () => { try { await api('/haozhu/refresh',{m
 $('btn-hz-recover').onclick = async () => { try { await api('/haozhu/recover',{method:'POST'}); await loadLedger(); toast('恢复清理完成，未确认结果保留待清理'); } catch(e) { toast(e.message); } };
 $('btn-budget-add').onclick = async () => { try { await api('/haozhu/budget',{method:'POST',body:JSON.stringify({amount:+$('budget-add').value})}); await loadLedger(); toast('预算额度已追加'); } catch(e) { toast(e.message); } };
 function resetHzCatalog(message) {
-  ++hzSearchRequest; ++hzChannelRequest; hzChannels = [];
+  ++hzSearchRequest; ++hzChannelRequest; hzChannels = []; hzChosenChannels.clear();
+  $('hz-channel-summary').textContent = '';
   $('hz-projects').replaceChildren(); $('hz-channel-body').replaceChildren();
   $('hz-catalog-sid').value = ''; $('hz-channel-status').textContent = '';
   $('hz-project-status').textContent = message;
@@ -743,15 +756,44 @@ $('btn-hz-search').onclick = searchHzProjects;
 $('hz-proj-key').addEventListener('keydown', event => {
   if (event.key === 'Enter' && !event.isComposing) { event.preventDefault(); searchHzProjects(); }
 });
+function hzChannelView(normalOnly = $('hz-normal-only').checked) {
+  const order = $('hz-channel-sort').value;
+  const rows = hzChannels.map((c, i) => ({c, i})).filter(({c}) => !normalOnly || ['正常号段','正常号','正常'].includes((c.segment_type || '').trim()));
+  if (order === 'default') return rows;
+  const field = order.startsWith('price') ? 'price' : 'stock';
+  const direction = ['price-desc','stock'].includes(order) ? -1 : 1;
+  const known = v => typeof v === 'number' && Number.isFinite(v) && v >= 0;
+  rows.sort((a, b) => {
+    const x = a.c[field], y = b.c[field];
+    if (known(x) !== known(y)) return known(x) ? -1 : 1;
+    if (known(x) && x !== y) return direction * (x - y);
+    const stock = c => known(c.stock) ? c.stock : -1;
+    const price = c => known(c.price) ? c.price : Infinity;
+    return stock(b.c) - stock(a.c) || price(a.c) - price(b.c) || a.c.uid.localeCompare(b.c.uid);
+  });
+  return rows;
+}
+function updateHzChannelSummary(rows = hzChannelView()) {
+  const visible = new Set(rows.map(({c}) => c.uid));
+  const hidden = [...hzChosenChannels].filter(uid => !visible.has(uid)).length;
+  $('hz-channel-summary').textContent = `显示 ${rows.length} / ${hzChannels.length} 个渠道 · 已选 ${hzChosenChannels.size} 个` + (hidden ? `（其中 ${hidden} 个被筛选隐藏，仍会保存）` : '');
+}
 function renderHzChannels() {
-  const selected = new Set($('hz-uids').value.split(/[,\s]+/).filter(Boolean));
-  $('hz-channel-body').innerHTML = hzChannels.map((c, i) => `<tr>
-    <td><input type="checkbox" data-channel="${i}" ${selected.has(c.uid) ? 'checked' : ''}></td>
+  const rows = hzChannelView();
+  $('hz-channel-body').innerHTML = rows.map(({c, i}) => `<tr>
+    <td><input type="checkbox" data-channel="${i}" ${hzChosenChannels.has(c.uid) ? 'checked' : ''}></td>
     <td><b>${esc(c.uid)}</b><br>${esc(c.name)}</td>
-    <td>${c.price === null ? '未知' : esc(c.price)}</td><td>${c.stock < 0 ? '未知' : esc(c.stock)}</td>
+    <td>${c.price === null || c.price === undefined ? '未知' : esc(c.price)}</td><td>${c.stock < 0 || c.stock === undefined ? '未知' : esc(c.stock)}</td>
+    <td>${esc(c.segment_type || '未知号段')}<br>${esc((c.segments || []).join(' / ') || '未标注')}</td>
     <td>${esc((c.isps || []).join(' / '))}<br>${esc((c.provinces || []).join(' / ') || '不限')}</td>
     <td>${esc(c.state || (c.pinned ? '市场置顶' : '市场渠道'))}</td>
-    <td><button class="secondary" data-join="${i}">加入豪猪账户</button></td></tr>`).join('') || '<tr><td colspan="7">暂无对接码</td></tr>';
+    <td><button class="secondary" data-join="${i}">加入豪猪账户</button></td></tr>`).join('') || `<tr><td colspan="8">${hzChannels.length ? '没有符合筛选条件的对接码，可取消正常号筛选查看全部' : '暂无对接码'}</td></tr>`;
+  updateHzChannelSummary(rows);
+  $('hz-channel-body').querySelectorAll('[data-channel]').forEach(input => input.onchange = () => {
+    const uid = hzChannels[+input.dataset.channel].uid;
+    if (input.checked) hzChosenChannels.add(uid); else hzChosenChannels.delete(uid);
+    updateHzChannelSummary();
+  });
   $('hz-channel-body').querySelectorAll('[data-join]').forEach(button => button.onclick = async () => {
     button.disabled = true;
     try { await api('/haozhu/add-uid', {method:'POST',body:JSON.stringify({uid:hzChannels[+button.dataset.join].uid})});
@@ -759,6 +801,8 @@ function renderHzChannels() {
     } catch(e) { button.disabled = false; toast(e.message); }
   });
 }
+$('hz-channel-sort').onchange = renderHzChannels;
+$('hz-normal-only').onchange = renderHzChannels;
 async function loadHzChannels(mine) {
   const request = ++hzChannelRequest;
   $('hz-channel-status').textContent = '正在查询…';
@@ -767,19 +811,23 @@ async function loadHzChannels(mine) {
       '/haozhu/uids?sid=' + encodeURIComponent($('hz-catalog-sid').value || $('hz-sid').value);
     const r = await api(path);
     if (request !== hzChannelRequest) return;
-    hzChannels = r.items || []; renderHzChannels();
+    hzChannels = r.items || [];
+    const saved = new Set($('hz-uids').value.split(/[,\s]+/).filter(Boolean));
+    hzChosenChannels = new Set(hzChannels.filter(c => saved.has(c.uid)).map(c => c.uid));
+    renderHzChannels();
     $('hz-channel-status').textContent = (mine ? '我的对接码' : '市场对接码') + '：' + hzChannels.length + ' 个 · 查询时间 ' + new Date().toLocaleTimeString();
   } catch(e) { if (request === hzChannelRequest) { $('hz-channel-status').textContent = e.message; toast(e.message); } }
 }
 $('btn-hz-uids').onclick = () => loadHzChannels(false);
 $('btn-hz-mine').onclick = () => loadHzChannels(true);
 async function saveHzSelection(clear) {
-  const uids = clear ? [] : [...$('hz-channel-body').querySelectorAll('[data-channel]:checked')].map(el => hzChannels[+el.dataset.channel].uid);
+  const uids = clear ? [] : hzChannelView(false).filter(({c}) => hzChosenChannels.has(c.uid)).map(({c}) => c.uid);
   if (!clear && !uids.length) return toast('先勾选对接码，或使用清空按钮');
   if (uids.some(uid => uid.includes('-') && uid.split('-')[0] !== $('hz-sid').value.trim())) return toast('请只选择当前数字项目 ID 对应的渠道');
   try {
     await api('/haozhu/select', {method:'POST',body:JSON.stringify({sid:$('hz-sid').value,uids})});
     $('hz-uid').value = ''; $('hz-uids').value = uids.join('\n');
+    hzChosenChannels = new Set(uids);
     renderHzChannels(); toast('本地渠道池已保存');
   } catch(e) { toast(e.message); }
 }
@@ -918,7 +966,7 @@ function loadCurrent() {
   if (cur?.id === 'settings' && cur.contains(document.activeElement)) return;
   if (cur && loaders[cur.id]) loaders[cur.id]();
 }
-loadCurrent();
+showPage(location.hash.slice(1));
 setInterval(loadCurrent, 4000);
 </script>
 </body>

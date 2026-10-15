@@ -4,7 +4,7 @@ import getpass
 import json
 
 import haozhu_sms as hz
-from haozhu_catalog import CatalogError, get_client, save_config, select_channels, uid_list
+from haozhu_catalog import CHANNEL_SORTS, CatalogError, get_client, save_config, select_channels, uid_list
 
 
 def main(argv=None):
@@ -14,8 +14,13 @@ def main(argv=None):
     session = sub.add_parser("session", help="Validate H5 PHPSESSID before saving (hidden input)")
     session.add_argument("--clear", action="store_true")
     sub.add_parser("search", help="Search projects").add_argument("keyword")
-    sub.add_parser("uids", help="List market channels, prices and stock").add_argument("sid")
-    sub.add_parser("my-uids", help="List joined channels").add_argument("keyword", nargs="?", default="")
+    market = sub.add_parser("uids", help="List market channels, prices and stock")
+    market.add_argument("sid")
+    mine = sub.add_parser("my-uids", help="List joined channels")
+    mine.add_argument("keyword", nargs="?", default="")
+    for command in (market, mine):
+        command.add_argument("--sort", choices=CHANNEL_SORTS, default="price", help="price: low to high; stock: high to low")
+        command.add_argument("--normal-only", action="store_true", help="Only channels explicitly marked as normal numbers")
     sub.add_parser("add-uid", help="Join a channel in the provider account").add_argument("uid")
     select = sub.add_parser("select", help="Save local project/channel selection")
     select.add_argument("sid", help="Numeric project ID")
@@ -40,9 +45,9 @@ def main(argv=None):
             if args.command == "search":
                 result = {"items": client.projects(args.keyword)}
             elif args.command == "uids":
-                result = {"items": client.channels(args.sid)}
+                result = {"items": client.channels(args.sid, sort=args.sort, normal_only=args.normal_only)}
             elif args.command == "my-uids":
-                result = {"items": client.channels(keyword=args.keyword, mine=True)}
+                result = {"items": client.channels(keyword=args.keyword, mine=True, sort=args.sort, normal_only=args.normal_only)}
             else:
                 result = client.add_uid(args.uid)
         print(json.dumps(result, ensure_ascii=False, indent=2))

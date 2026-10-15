@@ -97,6 +97,30 @@ def _number(value, default, integer=False):
         return default
 
 
+CHANNEL_SORTS = ("default", "price", "price-desc", "stock", "stock-asc")
+NORMAL_SEGMENTS = {"正常号段", "正常号", "正常"}
+
+
+def channel_view(items, sort="default", normal_only=False):
+    if sort not in CHANNEL_SORTS:
+        raise CatalogError("Unknown channel sort order", 400)
+    # {意图：仅依据平台明确标注筛正常号；未知和混合号段不推断成正常号。}
+    rows = [row for row in items if not normal_only or row.get("segment_type", "").strip() in NORMAL_SEGMENTS]
+    if sort == "default":
+        return rows
+    field = "price" if sort.startswith("price") else "stock"
+    direction = -1 if sort in ("price-desc", "stock") else 1
+    def key(row):
+        value = row.get(field)
+        known = isinstance(value, (int, float)) and math.isfinite(value) and value >= 0
+        stock, price = row.get("stock", -1), row.get("price")
+        return (not known, direction * value if known else 0,
+                -stock if isinstance(stock, (int, float)) and stock >= 0 else math.inf,
+                price if isinstance(price, (int, float)) and price >= 0 else math.inf,
+                row["uid"])
+    return sorted(rows, key=key)
+
+
 class Catalog:
     def __init__(self, session=None, http=None):
         self.session = str(session if session is not None else hz.load_credentials().get("h5_session", "")).strip()
@@ -227,7 +251,7 @@ class Catalog:
             result.append({"sid": str(row["sid"]), "project_id": match[1] if match else "", "name": name})
         return result
 
-    def channels(self, sid="", keyword="", mine=False):
+    def channels(self, sid="", keyword="", mine=False, sort="default", normal_only=False):
         if not mine and not str(sid).strip():
             raise CatalogError("A project identifier is required", 400)
         query = ({"gjc": keyword.strip()} if keyword.strip() else {}) if mine else {"sid": str(sid).strip()}
@@ -243,7 +267,7 @@ class Catalog:
                 "updated_at": row.get("time", "") if isinstance(row.get("time", ""), str) else ""})
         if not mine:
             result.sort(key=lambda row: (not row["pinned"], -row["stock"]))
-        return result
+        return channel_view(result, sort, normal_only)
 
     def add_uid(self, uid):
         uid = uid.strip()

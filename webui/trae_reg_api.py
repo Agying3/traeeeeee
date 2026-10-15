@@ -654,13 +654,13 @@ async def haozhu_search(kw: str = ""):
 
 
 @app.get("/api/haozhu/uids")
-async def haozhu_uids(sid: str = ""):
-    return {"items": await _catalog_call("channels", sid)}
+async def haozhu_uids(sid: str = "", sort: str = "default", normal_only: bool = False):
+    return {"items": await _catalog_call("channels", sid, sort=sort, normal_only=normal_only)}
 
 
 @app.get("/api/haozhu/my-uids")
-async def haozhu_my_uids(kw: str = ""):
-    return {"items": await _catalog_call("channels", keyword=kw, mine=True)}
+async def haozhu_my_uids(kw: str = "", sort: str = "default", normal_only: bool = False):
+    return {"items": await _catalog_call("channels", keyword=kw, mine=True, sort=sort, normal_only=normal_only)}
 
 
 class HzUID(BaseModel):
