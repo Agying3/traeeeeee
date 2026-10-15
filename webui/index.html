@@ -155,7 +155,7 @@
   #toast { position:fixed; right:24px; bottom:24px; z-index:9; display:none;
            background:#12231d; color:#fff; border-radius:10px; padding:10px 16px;
            box-shadow:var(--shadow); max-width:420px; }
-  #haozhu { --hz-divider:rgb(100 116 139 / .16); }
+  #haozhu { --hz-metric-gradient:linear-gradient(90deg,#dceaff 0%,#e6ddfb 25%,#f5deed 50%,#fbe5d6 75%,#fcf1cf 100%); }
   #haozhu h1 { font-size:28px; letter-spacing:-.5px; }
   #haozhu > .lead { margin-bottom:24px; }
   #haozhu .card { min-width:0; padding:24px; border-radius:16px;
@@ -181,11 +181,11 @@
   #haozhu .metrics-row { grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:12px;
     background:none; border:0; border-radius:0; box-shadow:none; margin-bottom:22px; }
   #haozhu .metric { border:1px solid rgb(136 156 190 / .2); border-radius:12px;
-    background:linear-gradient(110deg,#edf3ff 0%,#f1effc 48%,#e5f4f0 100%);
+    background:var(--hz-metric-gradient);
     background-size:calc(var(--metric-count,1) * 100%) 100%;
     background-position:var(--metric-position,0%) 0;
     box-shadow:0 3px 12px rgb(40 60 95 / .035); padding:20px 24px; min-width:0; }
-  #haozhu .metric small { font-size:12px; color:#596879; }
+  #haozhu .metric small { font-size:12px; color:#475569; }
   #haozhu .metric b { font-size:26px; margin-top:8px; font-weight:650;
     letter-spacing:-.5px; overflow-wrap:anywhere; font-variant-numeric:tabular-nums; }
   #haozhu #ledger-metrics .metric { padding:16px 20px; }
@@ -679,10 +679,11 @@ async function loadHaozhu() {
     let m = [['余额', c.balance === '' || c.balance === undefined ? '—' : '¥' + c.balance],
              ['平台字段 num', '待核实'],
              ['对接码池', (c.uid_pool_count || 0) + ' 个渠道'],
-             ['凭据', c.configured ? '已配' : '未配']];
+             ['凭据', c.configured ? '已配' : '未配'],
+             ['今日加号', '—']];
     try {
       const ct = await api('/continuous');
-      m.push(['今日加号', ct.added_today + '/' + (ct.config?.daily_max ?? '—')]);
+      m[4][1] = ct.added_today + '/' + (ct.config?.daily_max ?? '—');
       renderContinuous(ct);
     } catch (e) {}
     metric($('haozhu-metrics'), m); await loadLedger();
