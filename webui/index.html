@@ -22,6 +22,7 @@
     --luoyv-brand-soft: #ffedd5;
     --luoyv-warm: #c2410c;
     --luoyv-active: linear-gradient(135deg, #fff7ed 0%, #ffedd5 48%, #e6f4ef 100%);
+    --ui-gradient:linear-gradient(270deg,#dceaff 0%,#e6ddfb 25%,#f5deed 50%,#fbe5d6 75%,#fcf1cf 100%);
     /* 旧变量映射(旧规则不改也吃到新色) */
     --bg: var(--luoyv-bg-mid);
     --surface: var(--luoyv-card);
@@ -155,7 +156,7 @@
   #toast { position:fixed; right:24px; bottom:24px; z-index:9; display:none;
            background:#12231d; color:#fff; border-radius:10px; padding:10px 16px;
            box-shadow:var(--shadow); max-width:420px; }
-  #haozhu { --hz-metric-gradient:linear-gradient(270deg,#dceaff 0%,#e6ddfb 25%,#f5deed 50%,#fbe5d6 75%,#fcf1cf 100%); }
+  #haozhu { --hz-metric-gradient:var(--ui-gradient); }
   #haozhu h1 { font-size:28px; letter-spacing:-.5px; }
   #haozhu > .lead { margin-bottom:24px; }
   #haozhu .card { min-width:0; padding:24px; border-radius:16px;
@@ -165,8 +166,15 @@
   #haozhu .card h3 { font-size:14px; margin:24px 0 10px; }
   #haozhu .card p { font-size:13px; line-height:1.7; }
   #haozhu .grid { gap:20px; align-items:start; }
-  #haozhu .hz-workspace { grid-template-columns:minmax(300px,.8fr) minmax(0,1.6fr); }
-  #haozhu .hz-catalog { grid-template-columns:minmax(0,1fr); }
+  #haozhu .hz-workspace { grid-template-columns:minmax(0,1fr); }
+  .hz-auth-fields { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:14px 18px; align-items:start; }
+  .hz-field-wide { grid-column:span 2; }
+  .hz-field-full { grid-column:1/-1; margin:0; }
+  #haozhu .hz-session-actions { align-self:end; }
+  #haozhu .hz-session-actions button { flex:1 1 auto; }
+  .hz-query-fields { display:grid; grid-template-columns:minmax(120px,1fr) auto minmax(180px,1.4fr) auto auto;
+    gap:12px; align-items:end; }
+  .hz-query-fields > * { min-width:0; }
   #haozhu .cols-2 { grid-template-columns:minmax(0,1fr) minmax(0,1fr); }
   #haozhu label { display:block; min-width:0; color:#475569; font-size:13px; font-weight:500; }
   #haozhu label > input:not([type=checkbox]), #haozhu label > textarea,
@@ -199,7 +207,10 @@
   #hz-channel-summary { font-weight:500; color:#475569; }
   @media (max-width:1100px) {
     .app { grid-template-columns:190px minmax(0,1fr); }
-    #haozhu .cols-2, #haozhu .hz-workspace { grid-template-columns:minmax(0,1fr); }
+    #haozhu .cols-2 { grid-template-columns:minmax(0,1fr); }
+    .hz-auth-fields { grid-template-columns:repeat(2,minmax(0,1fr)); }
+    .hz-query-fields { grid-template-columns:minmax(0,1fr) auto; }
+    .hz-query-fields > label:nth-of-type(2) { grid-column:1/-1; }
     #haozhu .metric { padding:16px; }
   }
   @media (max-width:640px) {
@@ -214,6 +225,16 @@
     #haozhu .metric { padding:14px 12px; }
     #haozhu .metric b { font-size:22px; }
     #haozhu .row > label, #haozhu .row > button { flex:1 1 100%; }
+    .hz-auth-fields, .hz-query-fields { grid-template-columns:minmax(0,1fr); }
+    .hz-field-wide { grid-column:auto; }
+  }
+  ::selection { background:#f4dce7; color:#162133; }
+  html.gradient-selection-ready ::selection { background:transparent; color:inherit; }
+  #selection-highlight { position:fixed; inset:0; pointer-events:none; user-select:none; z-index:8; mix-blend-mode:multiply; }
+  #selection-highlight > i { position:absolute; border-radius:3px; background:var(--ui-gradient); }
+  @media (forced-colors:active) {
+    ::selection { background:Highlight; color:HighlightText; }
+    #selection-highlight { display:none; }
   }
 </style>
 </head>
@@ -319,53 +340,42 @@
     <p class="lead">取号与收码的账号配置（凭据只存本机 data/）</p>
     <div class="metrics-row" id="haozhu-metrics"></div>
     <div class="grid hz-workspace">
-      <div class="card">
-        <h2>鉴权</h2>
-        <label>豪猪账号
-          <input id="hz-user" placeholder="账号">
-        </label>
-        <label style="margin-top:10px;">密码（留空保留）
-          <input id="hz-pass" type="password" autocomplete="new-password" placeholder="豪猪 API 密码">
-        </label>
-        <label style="margin-top:10px;">API Token（留空保留）
-          <input id="hz-token" type="password" autocomplete="off">
-        </label>
-        <label style="margin-top:10px;">H5 PHPSESSID（项目与渠道查询）
-          <input id="hz-session" type="password" autocomplete="off" placeholder="只粘贴 Cookie 中 PHPSESSID 的值，留空保留">
-        </label>
-        <div class="row" style="margin-top:10px;">
-          <button id="btn-hz-session-save" class="secondary">验证并保存会话</button>
-          <button id="btn-hz-session-clear" class="secondary">清空会话</button>
+      <div class="card" id="hz-auth">
+        <h2>账户与接码配置</h2>
+        <div class="hz-auth-fields">
+          <label>豪猪账号<input id="hz-user" placeholder="账号"></label>
+          <label>密码（留空保留）<input id="hz-pass" type="password" autocomplete="new-password" placeholder="豪猪 API 密码"></label>
+          <label>API Token（留空保留）<input id="hz-token" type="password" autocomplete="off"></label>
+          <label class="hz-field-wide">H5 PHPSESSID（项目与渠道查询）
+            <input id="hz-session" type="password" autocomplete="off" placeholder="只粘贴 Cookie 中 PHPSESSID 的值，留空保留">
+          </label>
+          <div class="row hz-session-actions">
+            <button id="btn-hz-session-save" class="secondary">验证并保存会话</button>
+            <button id="btn-hz-session-clear" class="secondary">清空会话</button>
+          </div>
+          <p class="hz-field-full" id="hz-session-feedback" role="status" aria-live="polite"></p>
+          <p class="hz-field-full" id="hz-session-state" style="color:var(--muted)"></p>
+          <label>SID（项目ID）<input id="hz-sid" placeholder="58562"></label>
+          <label>对接码 UID（可选，锁低价渠道）<input id="hz-uid" placeholder="留空走默认渠道"></label>
+          <label>对接码池（每行一个）
+            <textarea id="hz-uids" placeholder="每行一个对接码，取号失败自动切换" style="min-height:72px;"></textarea>
+          </label>
         </div>
-        <p id="hz-session-feedback" role="status" aria-live="polite"></p>
-        <p id="hz-session-state" style="color:var(--muted)"></p>
-        <label style="margin-top:10px;">SID（项目ID）
-          <input id="hz-sid" placeholder="58562">
-        </label>
-        <label style="margin-top:10px;">对接码 UID（可选，锁低价渠道）
-          <input id="hz-uid" placeholder="留空走默认渠道">
-        </label>
-        <label style="margin-top:10px;">对接码池（每行一个，取号失败自动换下一个）
-          <textarea id="hz-uids" placeholder="每行一个对接码&#10;如:&#10;168392&#10;170255" style="min-height:90px;font-family:Consolas,monospace;"></textarea>
-        </label>
-        <button id="btn-hz-save" style="margin-top:12px;">保存配置</button>
+        <button id="btn-hz-save" style="margin-top:16px;">保存配置</button>
       </div>
-      <div class="grid hz-catalog">
-      <div class="card">
+      <div class="card" id="hz-query">
         <h2>搜索项目</h2>
-        <label>项目关键词
-          <input id="hz-proj-key" placeholder="Trae">
-        </label>
-        <button id="btn-hz-search" class="secondary" style="margin-top:12px;">搜索项目</button>
-        <p id="hz-project-status" role="status" aria-live="polite">输入项目关键词后点击搜索；查询使用豪猪 H5 会话。</p>
-        <div id="hz-projects" style="margin-top:12px;"></div>
-        <label style="margin-top:12px;">项目查询标识（H5 sid）<input id="hz-catalog-sid" placeholder="搜索结果自动填入，也可手填"></label>
-        <div class="row" style="margin-top:12px;flex-wrap:wrap;">
+        <div class="hz-query-fields">
+          <label>项目关键词<input id="hz-proj-key" placeholder="Trae"></label>
+          <button id="btn-hz-search" class="secondary">搜索项目</button>
+          <label>项目查询标识（H5 sid）<input id="hz-catalog-sid" placeholder="搜索结果自动填入，也可手填"></label>
           <button id="btn-hz-uids" class="secondary">查询市场对接码</button>
           <button id="btn-hz-mine" class="secondary">我的对接码</button>
         </div>
+        <p id="hz-project-status" role="status" aria-live="polite">输入项目关键词后点击搜索；查询使用豪猪 H5 会话。</p>
+        <div id="hz-projects" style="margin-top:12px;"></div>
       </div>
-      <div class="card">
+      <div class="card" id="hz-channels">
       <h2>对接码渠道</h2>
       <p style="color:var(--muted)">先查询价格与库存，按需加入豪猪账户，再勾选保存到本地轮换池。取号使用数字项目 ID；查询标识只用于搜索渠道。保存本地配置后仍需启动注册任务。</p>
       <div class="row" style="flex-wrap:wrap;align-items:center;gap:16px;">
@@ -379,7 +389,6 @@
       <div class="row" style="margin-top:12px;flex-wrap:wrap;">
         <button id="btn-hz-select">保存所选到本地渠道池</button>
         <button id="btn-hz-clear" class="secondary">清空本地渠道池</button>
-      </div>
       </div>
       </div>
     </div>
@@ -545,11 +554,56 @@
   </main>
 </div>
 <div id="toast"></div>
+<div id="selection-highlight" aria-hidden="true"></div>
 <script>
 const $ = (id) => document.getElementById(id);
 const API = location.origin + '/api';
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const money = value => value == null ? '—' : '¥' + Number(value).toFixed(2);
+
+// {意图：原生 ::selection 忽略渐变背景，用透传鼠标的文字矩形层着色；复制仍由原生选区处理。}
+let selectionFrame = 0;
+function paintSelection() {
+  selectionFrame = 0;
+  const layer = $('selection-highlight'), selection = getSelection();
+  const fragments = document.createDocumentFragment();
+  if (selection && !selection.isCollapsed && !document.activeElement?.matches('input,textarea') &&
+      !matchMedia('(forced-colors: active)').matches) {
+    for (let i = 0; i < selection.rangeCount; i++) {
+      const range = selection.getRangeAt(i), root = range.commonAncestorContainer;
+      const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+      let node = root.nodeType === Node.TEXT_NODE ? root : walker.nextNode();
+      for (; node; node = walker.nextNode()) {
+        if (!node.textContent.trim() || node.parentElement?.closest('script,style,textarea,input,#selection-highlight') ||
+            !range.intersectsNode(node)) continue;
+        const textRange = document.createRange();
+        textRange.selectNodeContents(node);
+        if (range.startContainer === node) textRange.setStart(node, range.startOffset);
+        if (range.endContainer === node) textRange.setEnd(node, range.endOffset);
+        for (const rect of textRange.getClientRects()) {
+          if (!rect.width || !rect.height || rect.bottom < 0 || rect.top > innerHeight ||
+              rect.right < 0 || rect.left > innerWidth) continue;
+          const mark = document.createElement('i');
+          Object.assign(mark.style, {left:rect.left+'px',top:rect.top+'px',width:rect.width+'px',
+            height:rect.height+'px',backgroundSize:innerWidth+'px 100%',backgroundPosition:-rect.left+'px 0'});
+          fragments.append(mark);
+        }
+      }
+    }
+  }
+  const active = fragments.childNodes.length > 0;
+  layer.replaceChildren(fragments);
+  document.documentElement.classList.toggle('gradient-selection-ready', active);
+}
+function queueSelectionPaint() {
+  if (!selectionFrame) selectionFrame = requestAnimationFrame(paintSelection);
+}
+document.addEventListener('selectionchange', queueSelectionPaint);
+document.addEventListener('scroll', queueSelectionPaint, {capture:true,passive:true});
+window.addEventListener('resize', queueSelectionPaint);
+document.addEventListener('focusin', queueSelectionPaint);
+document.addEventListener('focusout', queueSelectionPaint);
+matchMedia('(forced-colors: active)').addEventListener('change', queueSelectionPaint);
 
 function toast(msg) {
   const t = $('toast'); t.textContent = msg; t.style.display = 'block';
@@ -675,7 +729,7 @@ async function loadHaozhu() {
       (c.catalog_paused ? ' · 目录查询已暂停（离线模式）' : ' · 项目和渠道只读查询已开放') +
       (c.provider_paused ? ' · 取号、注册和加入平台账户仍暂停' : '');
     if (!hzSearchRequest) $('hz-project-status').textContent = c.catalog_paused ? '目录查询已暂停（离线模式）' :
-      (c.h5_configured ? '输入项目关键词，点击搜索或按 Enter。' : '请先填写并保存左侧 H5 PHPSESSID，再搜索项目；账号密码或 API Token 不替代 H5 会话。');
+      (c.h5_configured ? '输入项目关键词，点击搜索或按 Enter。' : '请先在上方账户配置中填写并保存 H5 PHPSESSID，再搜索项目；账号密码或 API Token 不替代 H5 会话。');
     let m = [['余额', c.balance === '' || c.balance === undefined ? '—' : '¥' + c.balance],
              ['平台字段 num', '待核实'],
              ['对接码池', (c.uid_pool_count || 0) + ' 个渠道'],
