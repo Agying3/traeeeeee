@@ -308,6 +308,7 @@
           <input id="hz-proj-key" placeholder="Trae">
         </label>
         <button id="btn-hz-search" class="secondary" style="margin-top:12px;">搜索项目</button>
+        <p id="hz-project-status" role="status" aria-live="polite">输入项目关键词后点击搜索；查询使用豪猪 H5 会话。</p>
         <div id="hz-projects" style="margin-top:12px;"></div>
         <label style="margin-top:12px;">项目查询标识（H5 sid）<input id="hz-catalog-sid" placeholder="搜索结果自动填入，也可手填"></label>
         <div class="row" style="margin-top:12px;flex-wrap:wrap;">
@@ -481,7 +482,11 @@ function toast(msg) {
 }
 async function api(path, opts) {
   const r = await fetch(API + path, Object.assign({headers:{'content-type':'application/json'}}, opts));
-  if (!r.ok) throw new Error((await r.text()).slice(0, 200));
+  if (!r.ok) {
+    let message = (await r.text()).slice(0, 500);
+    try { const data = JSON.parse(message); if (typeof data.detail === 'string') message = data.detail; } catch {}
+    const error = new Error(message); error.status = r.status; throw error;
+  }
   return r.json();
 }
 function metric(el, items) {
@@ -569,7 +574,7 @@ $('btn-engine-stop').onclick = async () => { try { await api('/engine/stop', {me
 
 /* ── 豪猪 ── */
 const PAUSE_TEXT = {daily: '今日上限', balance: '余额不足', proxy: '代理池空'};
-let hzDraft = false, hzChannels = [], hzRequest = 0;
+let hzDraft = false, hzChannels = [], hzSearchRequest = 0, hzChannelRequest = 0;
 for (const id of ['hz-user','hz-pass','hz-token','hz-session','hz-sid','hz-uid','hz-uids']) {
   $(id).addEventListener('input', () => { hzDraft = true; });
 }
@@ -582,8 +587,11 @@ async function loadHaozhu() {
       $('hz-sid').value = c.sid || ''; $('hz-uid').value = c.uid || '';
       $('hz-uids').value = c.uids || '';
     }
-    $('hz-session-state').textContent = (c.h5_configured ? 'H5 会话已配置' : '请从豪猪 H5 登录后的 Cookie 复制 PHPSESSID 值') +
-      (c.provider_paused ? ' · 当前为离线维护模式，平台查询暂停；可保存本地配置' : '');
+    $('hz-session-state').textContent = (c.h5_configured ? 'H5 会话已配置' : '请从豪猪 H5 登录后的 Cookie 复制 PHPSESSID 值，填写后点击保存') +
+      (c.catalog_paused ? ' · 目录查询已暂停（离线模式）' : ' · 项目和渠道只读查询已开放') +
+      (c.provider_paused ? ' · 取号、注册和加入平台账户仍暂停' : '');
+    if (!hzSearchRequest) $('hz-project-status').textContent = c.catalog_paused ? '目录查询已暂停（离线模式）' :
+      (c.h5_configured ? '输入项目关键词，点击搜索或按 Enter。' : '请先填写并保存左侧 H5 PHPSESSID，再搜索项目；账号密码或 API Token 不替代 H5 会话。');
     let m = [['余额', c.balance === '' || c.balance === undefined ? '—' : '¥' + c.balance],
              ['平台字段 num', '待核实'],
              ['对接码池', (c.uid_pool_count || 0) + ' 个渠道'],
@@ -657,25 +665,43 @@ $('btn-ct-save').onclick = async () => {
     toast('连续加号配置已保存'); loadHaozhu();
   } catch (e) { toast(e.message); }
 };
-$('btn-hz-search').onclick = async () => {
-  const request = ++hzRequest;
+// #1「项目搜索失败后结果区空白，渠道查询还会丢弃搜索响应」{意图：持久显示搜索状态，各列表独立处理最新请求。}
+async function searchHzProjects() {
+  const request = ++hzSearchRequest, keyword = $('hz-proj-key').value.trim();
+  const button = $('btn-hz-search'), status = $('hz-project-status');
+  $('hz-projects').replaceChildren();
+  if (!keyword) {
+    status.textContent = '请输入项目关键词'; button.disabled = false; button.textContent = '搜索项目'; return;
+  }
+  button.disabled = true; button.textContent = '搜索中…';
+  status.textContent = '正在搜索项目：' + keyword;
   try {
-    const r = await api('/haozhu/search?kw=' + encodeURIComponent($('hz-proj-key').value || ''));
-    if (request !== hzRequest) return;
-    $('hz-projects').innerHTML = (r.items || []).map((p, i) =>
+    const r = await api('/haozhu/search?kw=' + encodeURIComponent(keyword));
+    if (request !== hzSearchRequest) return;
+    const items = r.items || [];
+    status.textContent = items.length ? `找到 ${items.length} 个项目` : '暂无匹配项目，请更换关键词';
+    $('hz-projects').innerHTML = items.map((p, i) =>
       `<div style="padding:6px 0;"><b>${esc(p.project_id || '数字 ID 待确认')}</b> ${esc(p.name)} ` +
-      `<button class="secondary" data-project="${i}">选择项目并查渠道</button></div>`).join('') || '暂无匹配项目';
+      `<button class="secondary" data-project="${i}">选择项目并查渠道</button></div>`).join('');
     $('hz-projects').querySelectorAll('[data-project]').forEach(button => button.onclick = async () => {
-      const p = r.items[+button.dataset.project];
+      const p = items[+button.dataset.project];
       $('hz-catalog-sid').value = p.sid;
-      if (p.project_id) {
-        if ($('hz-sid').value !== p.project_id) { $('hz-uid').value = ''; $('hz-uids').value = ''; }
-        $('hz-sid').value = p.project_id; hzDraft = true;
-      }
+      if ($('hz-sid').value !== p.project_id) { $('hz-uid').value = ''; $('hz-uids').value = ''; }
+      $('hz-sid').value = p.project_id || ''; hzDraft = true;
       await loadHzChannels(false);
     });
-  } catch (e) { if (request === hzRequest) toast(e.message); }
-};
+  } catch (e) {
+    if (request !== hzSearchRequest) return;
+    status.textContent = '搜索失败：' + e.message;
+    if (e.status === 503 || e.status === 410) $('hz-session').focus();
+  } finally {
+    if (request === hzSearchRequest) { button.disabled = false; button.textContent = '搜索项目'; }
+  }
+}
+$('btn-hz-search').onclick = searchHzProjects;
+$('hz-proj-key').addEventListener('keydown', event => {
+  if (event.key === 'Enter' && !event.isComposing) { event.preventDefault(); searchHzProjects(); }
+});
 function renderHzChannels() {
   const selected = new Set($('hz-uids').value.split(/[,\s]+/).filter(Boolean));
   $('hz-channel-body').innerHTML = hzChannels.map((c, i) => `<tr>
@@ -693,16 +719,16 @@ function renderHzChannels() {
   });
 }
 async function loadHzChannels(mine) {
-  const request = ++hzRequest;
+  const request = ++hzChannelRequest;
   $('hz-channel-status').textContent = '正在查询…';
   try {
     const path = mine ? '/haozhu/my-uids?kw=' + encodeURIComponent($('hz-proj-key').value) :
       '/haozhu/uids?sid=' + encodeURIComponent($('hz-catalog-sid').value || $('hz-sid').value);
     const r = await api(path);
-    if (request !== hzRequest) return;
+    if (request !== hzChannelRequest) return;
     hzChannels = r.items || []; renderHzChannels();
     $('hz-channel-status').textContent = (mine ? '我的对接码' : '市场对接码') + '：' + hzChannels.length + ' 个 · 查询时间 ' + new Date().toLocaleTimeString();
-  } catch(e) { if (request === hzRequest) { $('hz-channel-status').textContent = e.message; toast(e.message); } }
+  } catch(e) { if (request === hzChannelRequest) { $('hz-channel-status').textContent = e.message; toast(e.message); } }
 }
 $('btn-hz-uids').onclick = () => loadHzChannels(false);
 $('btn-hz-mine').onclick = () => loadHzChannels(true);

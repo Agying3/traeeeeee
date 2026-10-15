@@ -581,6 +581,7 @@ async def haozhu_get():
             "configured": bool(creds.get("user") and creds.get("password") and creds.get("sid")),
             "h5_configured": bool(creds.get("h5_session")),
             "token_configured": bool(creds.get("token")),
+            "catalog_paused": os.environ.get("TRAE_HAOZHU_CATALOG_DISABLED") == "1",
             "provider_paused": os.environ.get("TRAE_REGISTRATION_DISABLED") == "1"}
 
 

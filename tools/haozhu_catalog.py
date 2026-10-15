@@ -86,10 +86,13 @@ class Catalog:
         self.http = http or requests
 
     def call(self, kind, **params):
-        if os.environ.get("TRAE_REGISTRATION_DISABLED") == "1":
-            raise CatalogError("Provider operations are paused in maintenance mode", 409)
+        # {意图：注册暂停仍允许浏览目录；完全离线由目录开关单独控制，加入渠道仍受注册暂停限制。}
+        if os.environ.get("TRAE_HAOZHU_CATALOG_DISABLED") == "1":
+            raise CatalogError("豪猪目录查询已暂停（离线模式）", 409)
+        if kind == 4 and os.environ.get("TRAE_REGISTRATION_DISABLED") == "1":
+            raise CatalogError("注册已暂停，加入豪猪账户操作也已暂停", 409)
         if not self.session:
-            raise CatalogError("Configure the H5 PHPSESSID first", 503)
+            raise CatalogError("请先填写并保存豪猪 H5 PHPSESSID，再搜索项目或查询渠道", 503)
         if re.search(r"[;\s]", self.session):
             raise CatalogError("Paste only the PHPSESSID value", 400)
         try:
@@ -105,7 +108,7 @@ class Catalog:
             raise CatalogError("Haozhu H5 response must be an object")
         code, message = str(data.get("code", "")).strip(), str(data.get("msg") or "")
         if any(word in message for word in ("请选择正确的API", "请先登录", "登录失效", "登录过期")):
-            raise CatalogError("H5 session expired; paste a new PHPSESSID", 410)
+            raise CatalogError("H5 会话已失效，请重新填写并保存 PHPSESSID", 410)
         if kind == 4 and "已添加" in message:
             return {"data": []}
         if code not in ("1", "200") and not (kind != 4 and code == "0"):
