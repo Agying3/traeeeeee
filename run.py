@@ -170,6 +170,11 @@ def stop(port: int) -> int:
 
 
 def main() -> int:
+    if sys.argv[1:2] == ["haozhu"]:
+        initialize(migrate=os.environ.get("TRAE_SKIP_MIGRATION") != "1")
+        sys.path.insert(0, str(ROOT / "tools"))
+        from haozhu_cli import main as haozhu_main
+        return haozhu_main(sys.argv[2:])
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command", nargs="?", choices=("start", "stop", "status", "doctor", "serve"),
                         default="start")

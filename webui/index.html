@@ -281,9 +281,16 @@
         <label>豪猪账号
           <input id="hz-user" placeholder="账号">
         </label>
-        <label style="margin-top:10px;">密码 / Token
-          <input id="hz-pass" type="password" placeholder="密码或 token">
+        <label style="margin-top:10px;">密码（留空保留）
+          <input id="hz-pass" type="password" autocomplete="new-password" placeholder="豪猪 API 密码">
         </label>
+        <label style="margin-top:10px;">API Token（留空保留）
+          <input id="hz-token" type="password" autocomplete="off">
+        </label>
+        <label style="margin-top:10px;">H5 PHPSESSID（项目与渠道查询）
+          <input id="hz-session" type="password" autocomplete="off" placeholder="只粘贴 Cookie 中 PHPSESSID 的值，留空保留">
+        </label>
+        <p id="hz-session-state" style="color:var(--muted)"></p>
         <label style="margin-top:10px;">SID（项目ID）
           <input id="hz-sid" placeholder="58562">
         </label>
@@ -302,6 +309,21 @@
         </label>
         <button id="btn-hz-search" class="secondary" style="margin-top:12px;">搜索项目</button>
         <div id="hz-projects" style="margin-top:12px;"></div>
+        <label style="margin-top:12px;">项目查询标识（H5 sid）<input id="hz-catalog-sid" placeholder="搜索结果自动填入，也可手填"></label>
+        <div class="row" style="margin-top:12px;flex-wrap:wrap;">
+          <button id="btn-hz-uids" class="secondary">查询市场对接码</button>
+          <button id="btn-hz-mine" class="secondary">我的对接码</button>
+        </div>
+      </div>
+    </div>
+    <div class="card" style="margin-top:16px;">
+      <h2>对接码渠道</h2>
+      <p style="color:var(--muted)">先查询价格与库存，按需加入豪猪账户，再勾选保存到本地轮换池。取号使用数字项目 ID；查询标识只用于搜索渠道。保存本地配置后仍需启动注册任务。</p>
+      <p id="hz-channel-status" role="status"></p>
+      <div style="overflow:auto"><table><thead><tr><th>选择</th><th>UID / 项目</th><th>单价（元）</th><th>库存</th><th>运营商 / 省份</th><th>状态</th><th>操作</th></tr></thead><tbody id="hz-channel-body"></tbody></table></div>
+      <div class="row" style="margin-top:12px;flex-wrap:wrap;">
+        <button id="btn-hz-select">保存所选到本地渠道池</button>
+        <button id="btn-hz-clear" class="secondary">清空本地渠道池</button>
       </div>
     </div>
     <div class="card" style="margin-top:16px;">
@@ -547,12 +569,21 @@ $('btn-engine-stop').onclick = async () => { try { await api('/engine/stop', {me
 
 /* ── 豪猪 ── */
 const PAUSE_TEXT = {daily: '今日上限', balance: '余额不足', proxy: '代理池空'};
+let hzDraft = false, hzChannels = [], hzRequest = 0;
+for (const id of ['hz-user','hz-pass','hz-token','hz-session','hz-sid','hz-uid','hz-uids']) {
+  $(id).addEventListener('input', () => { hzDraft = true; });
+}
 async function loadHaozhu() {
   try {
     const c = await api('/haozhu/config');
-    $('hz-user').value = c.user || ''; $('hz-pass').value = '';
-    $('hz-sid').value = c.sid || ''; $('hz-uid').value = c.uid || '';
-    if (document.activeElement !== $('hz-uids')) $('hz-uids').value = c.uids || '';
+    if (!hzDraft) {
+      $('hz-user').value = c.user || ''; $('hz-pass').value = '';
+      $('hz-token').value = ''; $('hz-session').value = '';
+      $('hz-sid').value = c.sid || ''; $('hz-uid').value = c.uid || '';
+      $('hz-uids').value = c.uids || '';
+    }
+    $('hz-session-state').textContent = (c.h5_configured ? 'H5 会话已配置' : '请从豪猪 H5 登录后的 Cookie 复制 PHPSESSID 值') +
+      (c.provider_paused ? ' · 当前为离线维护模式，平台查询暂停；可保存本地配置' : '');
     let m = [['余额', c.balance === '' || c.balance === undefined ? '—' : '¥' + c.balance],
              ['平台字段 num', '待核实'],
              ['对接码池', (c.uid_pool_count || 0) + ' 个渠道'],
@@ -610,11 +641,12 @@ $('btn-hz-refresh').onclick = async () => { try { await api('/haozhu/refresh',{m
 $('btn-hz-recover').onclick = async () => { try { await api('/haozhu/recover',{method:'POST'}); await loadLedger(); toast('恢复清理完成，未确认结果保留待清理'); } catch(e) { toast(e.message); } };
 $('btn-budget-add').onclick = async () => { try { await api('/haozhu/budget',{method:'POST',body:JSON.stringify({amount:+$('budget-add').value})}); await loadLedger(); toast('预算额度已追加'); } catch(e) { toast(e.message); } };
 $('btn-hz-save').onclick = async () => {
-  try { await api('/haozhu/config', {method: 'POST', body: JSON.stringify({
-    user: $('hz-user').value, pass: $('hz-pass').value,
-    sid: $('hz-sid').value, uid: $('hz-uid').value,
-    uids: $('hz-uids').value})});
-    toast('豪猪配置已保存'); loadHaozhu();
+  const body = {user: $('hz-user').value, pass: $('hz-pass').value,
+    token: $('hz-token').value, sid: $('hz-sid').value, uid: $('hz-uid').value,
+    uids: $('hz-uids').value};
+  if ($('hz-session').value.trim()) body.h5_session = $('hz-session').value.trim();
+  try { await api('/haozhu/config', {method: 'POST', body: JSON.stringify(body)});
+    hzDraft = false; toast('豪猪配置已保存'); await loadHaozhu();
   } catch (e) { toast(e.message); }
 };
 $('btn-ct-save').onclick = async () => {
@@ -626,14 +658,66 @@ $('btn-ct-save').onclick = async () => {
   } catch (e) { toast(e.message); }
 };
 $('btn-hz-search').onclick = async () => {
+  const request = ++hzRequest;
   try {
     const r = await api('/haozhu/search?kw=' + encodeURIComponent($('hz-proj-key').value || ''));
-    $('hz-projects').innerHTML = (r.items || []).map(p =>
-      `<div style="padding:4px 0;border-bottom:1px solid var(--line,#eee);">` +
-      `<b>${esc(p.sid)}</b> ${esc(p.name)}</div>`).join('') ||
-      '<div style="color:var(--muted)">无结果（需 tmp/haozhu.json 配 h5_session）</div>';
-  } catch (e) { toast(e.message); }
+    if (request !== hzRequest) return;
+    $('hz-projects').innerHTML = (r.items || []).map((p, i) =>
+      `<div style="padding:6px 0;"><b>${esc(p.project_id || '数字 ID 待确认')}</b> ${esc(p.name)} ` +
+      `<button class="secondary" data-project="${i}">选择项目并查渠道</button></div>`).join('') || '暂无匹配项目';
+    $('hz-projects').querySelectorAll('[data-project]').forEach(button => button.onclick = async () => {
+      const p = r.items[+button.dataset.project];
+      $('hz-catalog-sid').value = p.sid;
+      if (p.project_id) {
+        if ($('hz-sid').value !== p.project_id) { $('hz-uid').value = ''; $('hz-uids').value = ''; }
+        $('hz-sid').value = p.project_id; hzDraft = true;
+      }
+      await loadHzChannels(false);
+    });
+  } catch (e) { if (request === hzRequest) toast(e.message); }
 };
+function renderHzChannels() {
+  const selected = new Set($('hz-uids').value.split(/[,\s]+/).filter(Boolean));
+  $('hz-channel-body').innerHTML = hzChannels.map((c, i) => `<tr>
+    <td><input type="checkbox" data-channel="${i}" ${selected.has(c.uid) ? 'checked' : ''}></td>
+    <td><b>${esc(c.uid)}</b><br>${esc(c.name)}</td>
+    <td>${c.price === null ? '未知' : esc(c.price)}</td><td>${c.stock < 0 ? '未知' : esc(c.stock)}</td>
+    <td>${esc((c.isps || []).join(' / '))}<br>${esc((c.provinces || []).join(' / ') || '不限')}</td>
+    <td>${esc(c.state || (c.pinned ? '市场置顶' : '市场渠道'))}</td>
+    <td><button class="secondary" data-join="${i}">加入豪猪账户</button></td></tr>`).join('') || '<tr><td colspan="7">暂无对接码</td></tr>';
+  $('hz-channel-body').querySelectorAll('[data-join]').forEach(button => button.onclick = async () => {
+    button.disabled = true;
+    try { await api('/haozhu/add-uid', {method:'POST',body:JSON.stringify({uid:hzChannels[+button.dataset.join].uid})});
+      button.textContent = '已加入'; toast('已加入豪猪账户；勾选后可保存到本地渠道池');
+    } catch(e) { button.disabled = false; toast(e.message); }
+  });
+}
+async function loadHzChannels(mine) {
+  const request = ++hzRequest;
+  $('hz-channel-status').textContent = '正在查询…';
+  try {
+    const path = mine ? '/haozhu/my-uids?kw=' + encodeURIComponent($('hz-proj-key').value) :
+      '/haozhu/uids?sid=' + encodeURIComponent($('hz-catalog-sid').value || $('hz-sid').value);
+    const r = await api(path);
+    if (request !== hzRequest) return;
+    hzChannels = r.items || []; renderHzChannels();
+    $('hz-channel-status').textContent = (mine ? '我的对接码' : '市场对接码') + '：' + hzChannels.length + ' 个 · 查询时间 ' + new Date().toLocaleTimeString();
+  } catch(e) { if (request === hzRequest) { $('hz-channel-status').textContent = e.message; toast(e.message); } }
+}
+$('btn-hz-uids').onclick = () => loadHzChannels(false);
+$('btn-hz-mine').onclick = () => loadHzChannels(true);
+async function saveHzSelection(clear) {
+  const uids = clear ? [] : [...$('hz-channel-body').querySelectorAll('[data-channel]:checked')].map(el => hzChannels[+el.dataset.channel].uid);
+  if (!clear && !uids.length) return toast('先勾选对接码，或使用清空按钮');
+  if (uids.some(uid => uid.includes('-') && uid.split('-')[0] !== $('hz-sid').value.trim())) return toast('请只选择当前数字项目 ID 对应的渠道');
+  try {
+    await api('/haozhu/select', {method:'POST',body:JSON.stringify({sid:$('hz-sid').value,uids})});
+    $('hz-uid').value = ''; $('hz-uids').value = uids.join('\n');
+    renderHzChannels(); toast('本地渠道池已保存');
+  } catch(e) { toast(e.message); }
+}
+$('btn-hz-select').onclick = () => saveHzSelection(false);
+$('btn-hz-clear').onclick = () => saveHzSelection(true);
 
 /* ── 凭证库 ── */
 async function loadAccounts() {

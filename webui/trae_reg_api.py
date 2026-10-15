@@ -560,77 +560,101 @@ def _hz_summary_safe():
         return None
 
 
+def _hz_catalog_module():
+    _hz_client()
+    import haozhu_catalog
+    return haozhu_catalog
+
+
 @app.get("/api/haozhu/config")
 async def haozhu_get():
     hz = _hz_client()
-    try:
-        creds = hz.load_credentials()
-    except Exception:
-        creds = {}
-    s = {"balance": PROTECTION.cached_balance} if PROTECTION.cached_balance is not None else None
-    pool = creds.get("uids", "")
-    pool_list = [u for u in re.split(r"[,\n]", pool) if u.strip()] if pool else []
-    legacy = (creds.get("uid", "") or "").strip()
-    if legacy and legacy not in pool_list:
-        pool_list.insert(0, legacy)
-    return {"user": creds.get("user", ""), "sid": creds.get("sid", ""),
-            "uid": creds.get("uid", ""),
-            "uids": "\n".join(pool_list),
-            "uid_pool_count": len(pool_list),
-            "balance": (s or {}).get("balance", "") if s else "",
-            "occupied": (s or {}).get("occupied", "") if s else "",
-            "configured": bool(creds.get("user") and creds.get("password") and creds.get("sid"))}
+    creds = hz.load_credentials()
+    catalog = _hz_catalog_module()
+    pool = catalog.uid_list(creds.get("uids", ""))
+    legacy = str(creds.get("uid", "") or "").strip()
+    if legacy and legacy not in pool:
+        pool.insert(0, legacy)
+    return {"user": creds.get("user", ""), "sid": creds.get("sid", ""), "uid": legacy,
+            "uids": "\n".join(pool), "uid_pool_count": len(pool),
+            "balance": PROTECTION.cached_balance if PROTECTION.cached_balance is not None else "",
+            "configured": bool(creds.get("user") and creds.get("password") and creds.get("sid")),
+            "h5_configured": bool(creds.get("h5_session")),
+            "token_configured": bool(creds.get("token")),
+            "provider_paused": os.environ.get("TRAE_REGISTRATION_DISABLED") == "1"}
 
 
 class HzConfig(BaseModel):
-    user: str = ""
+    user: str | None = None
     pass_: str = Field("", alias="pass", validation_alias=__import__("pydantic").AliasChoices("pass", "pass_"))
-    sid: str = ""
-    uid: str = ""
-    uids: str = ""  # 对接码池: 逗号或换行分隔, 取号失败自动轮换
+    token: str = ""
+    h5_session: str | None = Field(None, max_length=256)
+    sid: str | None = None
+    uid: str | None = None
+    uids: str | None = None
 
 
 @app.post("/api/haozhu/config")
 async def haozhu_set(c: HzConfig):
-    """写回 tmp/haozhu.json(haozhu_sms 的凭据文件), token/h5_session 等字段保留。"""
-    hz = _hz_client()
-    creds = hz.load_credentials()
-    if c.user:
-        creds["user"] = c.user
-    if c.sid:
-        creds["sid"] = c.sid
-    if c.uid:
-        creds["uid"] = c.uid
-    if c.uids:
-        # 归一: 去空白, 合并旧单值, 去重
-        pool = [u.strip() for u in re.split(r"[,\n]", c.uids) if u.strip()]
-        legacy = (c.uid or "").strip()
-        if legacy and legacy not in pool:
-            pool.insert(0, legacy)
-        creds["uids"] = ",".join(dict.fromkeys(pool))
+    changes = c.model_dump(exclude={"pass_", "token"}, exclude_none=True)
     if c.pass_:
-        creds["password"] = c.pass_
-    hz.CRED_FILE.parent.mkdir(parents=True, exist_ok=True)
-    hz.CRED_FILE.write_text(json.dumps(creds, ensure_ascii=False, indent=1), encoding="utf-8")
+        changes["password"] = c.pass_
+    if c.token:
+        changes["token"] = c.token
+    catalog = _hz_catalog_module()
+    try:
+        result = catalog.save_config(changes)
+    except catalog.CatalogError as error:
+        raise HTTPException(error.status, str(error))
     log("豪猪配置已保存")
-    return {"ok": True}
+    return result
+
+
+async def _catalog_call(method, *args, **kwargs):
+    catalog = _hz_catalog_module()
+    try:
+        return await asyncio.to_thread(getattr(catalog.Catalog(), method), *args, **kwargs)
+    except catalog.CatalogError as error:
+        raise HTTPException(error.status, str(error))
 
 
 @app.get("/api/haozhu/search")
 async def haozhu_search(kw: str = ""):
-    """H5 项目搜索(找 sid 用); 需要 tmp/haozhu.json 里的 h5_session。"""
-    kw = (kw or "").strip()
-    if os.environ.get("TRAE_REGISTRATION_DISABLED") == "1":
-        raise HTTPException(409, "离线维护模式，项目搜索已暂停")
-    if len(kw) < 2:
-        raise HTTPException(400, "关键词至少两个字符")
-    hz = _hz_client()
-    sess = hz.load_credentials().get("h5_session", "")
+    return {"items": await _catalog_call("projects", kw)}
+
+
+@app.get("/api/haozhu/uids")
+async def haozhu_uids(sid: str = ""):
+    return {"items": await _catalog_call("channels", sid)}
+
+
+@app.get("/api/haozhu/my-uids")
+async def haozhu_my_uids(kw: str = ""):
+    return {"items": await _catalog_call("channels", keyword=kw, mine=True)}
+
+
+class HzUID(BaseModel):
+    uid: str = Field(min_length=1, max_length=128)
+
+
+@app.post("/api/haozhu/add-uid")
+async def haozhu_add_uid(c: HzUID):
+    return await _catalog_call("add_uid", c.uid)
+
+
+class HzSelection(BaseModel):
+    sid: str
+    uids: list[str] = Field(default_factory=list, max_length=100)
+    append: bool = False
+
+
+@app.post("/api/haozhu/select")
+async def haozhu_select(c: HzSelection):
+    catalog = _hz_catalog_module()
     try:
-        items = hz.h5_projects(sess, kw)
-    except hz.HaozhuError as e:
-        raise HTTPException(400, str(e)[:120])
-    return {"items": [{"sid": p.sid, "project_id": p.project_id, "name": p.name} for p in items]}
+        return catalog.select_channels(c.sid, c.uids, c.append)
+    except catalog.CatalogError as error:
+        raise HTTPException(error.status, str(error))
 
 
 @app.get("/api/haozhu/ledger")
