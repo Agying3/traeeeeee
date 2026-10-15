@@ -4,6 +4,7 @@
 import asyncio
 import json
 import os
+import re
 import uuid
 import subprocess
 import sys
@@ -33,7 +34,9 @@ BACKGROUND_TASKS = []
 app = FastAPI(title="Trae注册机")
 
 # ── 内存态 ──────────────────────────────────────────────
-state = {"queue": [], "running": False, "done": 0, "fail": 0, "worker": None}
+state = {"queue": [], "running": False, "done": 0, "fail": 0, "worker": None,
+         "stop_reason": "", "halted": False, "batch_id": "", "batch_ok": 0,
+         "batch_attempts": 0, "failure_streaks": {}}
 log_lines: list[str] = ["[WebUI] 注册机后端启动"]
 
 
@@ -67,9 +70,13 @@ def _atomic_write(path: Path, data):
 def queue_save():
     try:
         _atomic_write(QUEUE_FILE, {"queue": state["queue"],
-                                  "done": state["done"], "fail": state["fail"]})
-    except Exception:
-        pass
+                                  "done": state["done"], "fail": state["fail"],
+                                   "guard": {k: state.get(k) for k in ("stop_reason", "halted", "batch_id",
+                                             "batch_ok", "batch_attempts", "failure_streaks")}})
+    except Exception as error:
+        state.update(halted=True, stop_reason="队列保存失败，暂停派发")
+        log("队列保存失败: " + type(error).__name__)
+        raise
 
 
 def queue_load():
@@ -79,10 +86,11 @@ def queue_load():
             state["queue"] = d.get("queue", [])
             state["done"] = d.get("done", 0)
             state["fail"] = d.get("fail", 0)
+            state.update({k: v for k, v in d.get("guard", {}).items() if k in state})
             # 重启后 running 任务标回 pending(可重跑)
             for t in state["queue"]:
                 if t.get("status") in ("running", "waiting_code"):
-                    t["status"] = "pending"; t["stage"] = "重启恢复"
+                    t["status"] = "reconciliation_unknown"; t["stage"] = "重启恢复，等待核对"
         except Exception as error:
             log(f"队列读取失败，保留原文件: {error}")
             raise
@@ -112,7 +120,11 @@ class RegReq(BaseModel):
 async def engine_state():
     return {"running": state["running"], "queue": state["queue"],
             "done": state["done"], "fail": state["fail"],
-            "creds": len(list(CRED_DIR.glob("*.json")))}
+            "creds": len(list(CRED_DIR.glob("*.json"))),
+            "stop_reason": state.get("stop_reason", ""), "halted": state.get("halted", False),
+            "batch_id": state.get("batch_id", ""), "batch_ok": state.get("batch_ok", 0),
+            "batch_attempts": state.get("batch_attempts", 0),
+            "failure_streaks": state.get("failure_streaks", {})}
 
 
 @app.post("/api/queue")
@@ -123,6 +135,47 @@ async def queue_add(req: RegReq):
     log(f"队列 +{req.count} (代理#{req.proxy})")
     queue_save()
     return {"queued": req.count, "total": len(state["queue"])}
+
+
+class BatchReq(BaseModel):
+    proxy_start: int = 19
+    proxy_end: int = 19
+
+
+@app.post("/api/queue/batch")
+async def queue_batch(req: BatchReq):
+    """一键批量入队: 代理 #start..#end 每号一条任务(等价于逐个点加入队列)。"""
+    if req.proxy_start < 0 or req.proxy_end < req.proxy_start:
+        raise HTTPException(400, "代理范围无效")
+    count = req.proxy_end - req.proxy_start + 1
+    if count > 500:
+        raise HTTPException(400, "单次最多批量 500 条")
+    for p in range(req.proxy_start, req.proxy_end + 1):
+        state["queue"].append({"phone": "", "proxy": p, "stage": "pending",
+                                "status": "pending", "cred": False, "added": time.time()})
+    log(f"批量入队 +{count} (代理#{req.proxy_start}~#{req.proxy_end})")
+    queue_save()
+    return {"queued": count, "total": len(state["queue"])}
+
+
+@app.post("/api/queue/retry-failed")
+async def queue_retry_failed():
+    """一键重试: 所有失败任务重置为待处理(等价于逐个点重试按钮)。"""
+    retryable = []
+    skipped = []
+    for i, t in enumerate(state["queue"]):
+        if t.get("status") == "fail":
+            try:
+                _retry_guard(t)
+            except HTTPException:
+                skipped.append(i)
+                continue
+            retryable.append(i)
+            t["retries"] = 0
+            t["status"] = "pending"; t["stage"] = "手动重试"; t["cred"] = False
+    log(f"一键重试失败任务: {len(retryable)} 条" if retryable else "无失败任务可重试")
+    queue_save()
+    return {"retried": len(retryable), "skipped": skipped, "total": len(state["queue"])}
 
 
 class CodeReq(BaseModel):
@@ -151,6 +204,26 @@ class TaskIdx(BaseModel):
     reuse_phone: bool = False
 
 
+def _retry_guard(task, reuse=False):
+    if task.get("id") in ENGINE.active:
+        raise HTTPException(409, "任务仍在收尾，请先停止引擎")
+    if ENGINE.protection is None:
+        return
+    row = PROTECTION.ledger().get_attempt(task.get("attempt_id", "")) or {}
+    if reuse:
+        from haozhu_ledger import account_fingerprint
+        from haozhu_sms import _pid_alive
+        if not row.get("held") or row.get("phone") != task.get("phone"):
+            raise HTTPException(409, "复用需有仍在占用的原号码记录")
+        if row.get("account_fingerprint") != account_fingerprint(PROTECTION.credentials().get("user", "")):
+            raise HTTPException(409, "原号码与当前豪猪账号不匹配")
+        if _pid_alive(row.get("owner_pid")):
+            raise HTTPException(409, "原号码进程仍在运行")
+    elif (row.get("held") or task.get("budget_state") == "uncertain"
+          or PROTECTION.reservation_state(task.get("attempt_id", "")) in ("reserved", "uncertain")):
+        raise HTTPException(409, "先在豪猪页清理号码并核对待定预算")
+
+
 @app.post("/api/queue/retry")
 async def queue_retry(req: TaskIdx):
     if req.idx < 0 or req.idx >= len(state["queue"]):
@@ -160,6 +233,7 @@ async def queue_retry(req: TaskIdx):
         raise HTTPException(409, "当前任务请先停止；成功任务无需重试")
     if req.reuse_phone and not __import__("re").fullmatch(r"1[0-9]{10}", t.get("phone", "")):
         raise HTTPException(400, "任务尚未保存号码")
+    _retry_guard(t, req.reuse_phone)
     t["reuse_phone"] = req.reuse_phone
     t["retries"] = 0
     t["status"] = "pending"; t["stage"] = "手动重试"; t["cred"] = False
@@ -171,8 +245,11 @@ async def queue_retry(req: TaskIdx):
 @app.post("/api/queue/remove")
 async def queue_remove(req: TaskIdx):
     if 0 <= req.idx < len(state["queue"]):
-        if state["queue"][req.idx].get("status") in ("running", "waiting_code"):
+        t = state["queue"][req.idx]
+        if t.get("status") in ("running", "waiting_code") or t.get("id") in ENGINE.active:
             raise HTTPException(409, "请先停止运行中的任务")
+        if ENGINE.protection is not None:
+            _retry_guard(t)
         removed = state["queue"].pop(req.idx)
         log(f"移除任务: {removed.get('phone') or '未取号'}")
         queue_save()
@@ -188,14 +265,29 @@ def _af_cmd(task) -> list:
 
 
 from registration_engine import RegistrationEngine
+from registration_protection import RegistrationProtection
+
+
+def _proxy_indices():
+    if not PROXY_FILE.exists():
+        return []
+    return list(range(sum(1 for line in PROXY_FILE.read_text(encoding="utf-8-sig").splitlines()
+                          if line.strip() and not line.strip().startswith("#"))))
+
+
+PROTECTION = RegistrationProtection(runtime.STATE_DIR, load_config, lambda: _hz_summary_safe(), log,
+                                    lambda: _hz_client().load_credentials(), _proxy_indices)
 
 ENGINE = RegistrationEngine(state, load_config, queue_save, log, metrics_save,
                             lambda task: _af_cmd(task),
-                            lambda proc: _terminate_registration(proc), runtime.RUN_DIR, PROGRAM_DIR)
+                            lambda proc: _terminate_registration(proc), runtime.RUN_DIR, PROGRAM_DIR,
+                             protection=PROTECTION, proxy_indices=_proxy_indices)
 
 
 @app.post("/api/engine/start")
 async def engine_start():
+    if os.environ.get("TRAE_REGISTRATION_DISABLED") == "1":
+        raise HTTPException(409, "当前服务处于离线维护模式，注册引擎保持停止")
     return await ENGINE.start()
 
 async def _terminate_registration(proc):
@@ -223,6 +315,12 @@ async def watchdog():
 @app.on_event("startup")
 async def _start_watchdog():
     cont_load()
+    if os.environ.get("TRAE_REGISTRATION_DISABLED") != "1":
+        try:
+            await PROTECTION.recover()
+            PROTECTION.reconcile_reservations()
+        except Exception as error:
+            ENGINE.pause("启动恢复待重试: " + type(error).__name__)
     BACKGROUND_TASKS.extend([asyncio.create_task(watchdog()),
                              asyncio.create_task(continuous_loop())])
     log("注册机服务就绪")
@@ -315,6 +413,9 @@ async def continuous_loop():
 
 
 async def _continuous_tick(c: dict):
+    if os.environ.get("TRAE_REGISTRATION_DISABLED") == "1" or state.get("halted"):
+        cont["paused"] = "engine_halted"
+        return
     # 日期翻篇 → 当日计数清零
     today = time.strftime("%Y-%m-%d")
     if cont["date"] != today:
@@ -345,6 +446,9 @@ async def _continuous_tick(c: dict):
         return
     # 防线3: 豪猪余额(查询失败不挡——豪猪偶发抖动不该停摆值班)
     s = await asyncio.to_thread(_hz_summary_safe)
+    if s is None:
+        cont["paused"] = "balance_unknown"
+        return
     if s is not None:
         cont["balance"] = s.get("balance")
         if float(s.get("balance", 0) or 0) < min_balance:
@@ -354,7 +458,7 @@ async def _continuous_tick(c: dict):
                           f"¥{min_balance:.2f}，暂停补号（充值后自动恢复）")
             return
     # 派活: 入队(代理轮转) → 引擎没跑就拉起(worker 空闲自停, 下轮缺号再拉)
-    want = min(batch, daily_max - cont["added"], min_queue - active + 1)
+    want = min(batch, daily_max - cont["added"], min_queue - active)
     for _ in range(want):
         state["queue"].append({"phone": "", "proxy": _next_proxy(), "stage": "pending",
                                "status": "pending", "cred": False, "added": time.time()})
@@ -430,14 +534,9 @@ async def metrics(window_h: int = 24):
 
 @app.post("/api/engine/stop")
 async def engine_stop():
-    state["running"] = False
-    worker = state.get("worker")
-    if worker and not worker.done():
-        worker.cancel()
-        await asyncio.gather(worker, return_exceptions=True)
-    state["worker"] = None
+    await ENGINE.stop()
     queue_save()
-    log("引擎已停止，任务保留")
+    log("引擎已停止，任务保留；待核对任务保留预算预留")
     return {"ok": True}
 
 
@@ -456,9 +555,7 @@ def _hz_summary_safe():
         creds = hz.load_credentials()
         if not (creds.get("user") and creds.get("password") and creds.get("sid")):
             return None
-        cli = hz.HaozhuClient(creds["user"], creds["password"], creds["sid"],
-                              token=creds.get("token", ""), uid=creds.get("uid", ""))
-        return cli.summary()
+        return hz.build_client(creds).summary()
     except Exception:
         return None
 
@@ -470,9 +567,16 @@ async def haozhu_get():
         creds = hz.load_credentials()
     except Exception:
         creds = {}
-    s = await asyncio.to_thread(_hz_summary_safe)
+    s = {"balance": PROTECTION.cached_balance} if PROTECTION.cached_balance is not None else None
+    pool = creds.get("uids", "")
+    pool_list = [u for u in re.split(r"[,\n]", pool) if u.strip()] if pool else []
+    legacy = (creds.get("uid", "") or "").strip()
+    if legacy and legacy not in pool_list:
+        pool_list.insert(0, legacy)
     return {"user": creds.get("user", ""), "sid": creds.get("sid", ""),
             "uid": creds.get("uid", ""),
+            "uids": "\n".join(pool_list),
+            "uid_pool_count": len(pool_list),
             "balance": (s or {}).get("balance", "") if s else "",
             "occupied": (s or {}).get("occupied", "") if s else "",
             "configured": bool(creds.get("user") and creds.get("password") and creds.get("sid"))}
@@ -480,9 +584,10 @@ async def haozhu_get():
 
 class HzConfig(BaseModel):
     user: str = ""
-    pass_: str = ""
+    pass_: str = Field("", alias="pass", validation_alias=__import__("pydantic").AliasChoices("pass", "pass_"))
     sid: str = ""
     uid: str = ""
+    uids: str = ""  # 对接码池: 逗号或换行分隔, 取号失败自动轮换
 
 
 @app.post("/api/haozhu/config")
@@ -496,6 +601,13 @@ async def haozhu_set(c: HzConfig):
         creds["sid"] = c.sid
     if c.uid:
         creds["uid"] = c.uid
+    if c.uids:
+        # 归一: 去空白, 合并旧单值, 去重
+        pool = [u.strip() for u in re.split(r"[,\n]", c.uids) if u.strip()]
+        legacy = (c.uid or "").strip()
+        if legacy and legacy not in pool:
+            pool.insert(0, legacy)
+        creds["uids"] = ",".join(dict.fromkeys(pool))
     if c.pass_:
         creds["password"] = c.pass_
     hz.CRED_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -508,6 +620,8 @@ async def haozhu_set(c: HzConfig):
 async def haozhu_search(kw: str = ""):
     """H5 项目搜索(找 sid 用); 需要 tmp/haozhu.json 里的 h5_session。"""
     kw = (kw or "").strip()
+    if os.environ.get("TRAE_REGISTRATION_DISABLED") == "1":
+        raise HTTPException(409, "离线维护模式，项目搜索已暂停")
     if len(kw) < 2:
         raise HTTPException(400, "关键词至少两个字符")
     hz = _hz_client()
@@ -518,6 +632,65 @@ async def haozhu_search(kw: str = ""):
         raise HTTPException(400, str(e)[:120])
     return {"items": [{"sid": p.sid, "project_id": p.project_id, "name": p.name} for p in items]}
 
+
+@app.get("/api/haozhu/ledger")
+async def haozhu_ledger(limit: int = 100, attempt_id: str = ""):
+    data = await asyncio.to_thread(PROTECTION.overview)
+    data["events"] = await asyncio.to_thread(PROTECTION.ledger().events,
+                                             limit=max(1, min(limit, 500)), attempt_id=attempt_id)
+    return data
+
+
+@app.post("/api/haozhu/refresh")
+async def haozhu_refresh():
+    if os.environ.get("TRAE_REGISTRATION_DISABLED") == "1":
+        raise HTTPException(409, "离线维护模式，余额查询使用已存快照")
+    balance = await PROTECTION.snapshot("manual_refresh")
+    if balance is None:
+        raise HTTPException(502, "豪猪余额查询失败")
+    return {"balance": balance, "updated": PROTECTION.last_snapshot}
+
+
+@app.post("/api/haozhu/recover")
+async def haozhu_recover():
+    if ENGINE.active or state["running"] or ENGINE.stopping:
+        raise HTTPException(409, "请先停止引擎，等待在途任务收尾")
+    if os.environ.get("TRAE_REGISTRATION_DISABLED") == "1":
+        raise HTTPException(409, "离线维护模式，号码清理保持待恢复")
+    results = await PROTECTION.recover()
+    PROTECTION.reconcile_reservations()
+    return {"results": results, "state": PROTECTION.overview()}
+
+
+class BudgetReconcile(BaseModel):
+    attempt_id: str = Field(min_length=1, max_length=128)
+    received: bool
+    note: str = Field(min_length=1, max_length=200)
+
+
+@app.post("/api/haozhu/budget/reconcile")
+async def budget_reconcile(req: BudgetReconcile):
+    if ENGINE.active or state["running"] or ENGINE.stopping:
+        raise HTTPException(409, "请先停止引擎，等待在途任务收尾")
+    try:
+        result = PROTECTION.reconcile_budget(req.attempt_id, req.received, req.note)
+    except ValueError as error:
+        raise HTTPException(409, str(error))
+    for task in state["queue"]:
+        if task.get("attempt_id") == req.attempt_id:
+            task["budget_state"] = result["budget_state"]
+    queue_save()
+    return result
+
+
+class BudgetAdd(BaseModel):
+    amount: float = Field(gt=0, le=1000000, allow_inf_nan=False)
+    note: str = Field("手动追加预算", max_length=200)
+
+
+@app.post("/api/haozhu/budget")
+async def budget_add(req: BudgetAdd):
+    return PROTECTION.add_budget(req.amount, req.note)
 
 # ── 凭证库 ──────────────────────────────────────────────
 def _creds() -> list[dict]:
@@ -691,6 +864,15 @@ class ProgramSettings(BaseModel):
     timeout_requeue: bool = True
     max_retries: int = Field(2, ge=0, le=10)
     task_timeout_seconds: float = Field(900, gt=0, le=7200)
+    target_successes: int = Field(0, ge=0, le=100000)
+    max_batch_attempts: int = Field(2000, ge=0, le=100000)
+    consecutive_failures: int = Field(15, ge=0, le=10000)
+    min_balance: float = Field(1.1, ge=0, le=1000000, allow_inf_nan=False)
+    sms_unit_price: float = Field(1.1, gt=0, le=1000, allow_inf_nan=False)
+    budget_limit: float = Field(0, ge=0, le=1000000, allow_inf_nan=False)
+    retry_delay_seconds: float = Field(5, ge=0, le=600, allow_inf_nan=False)
+    retry_rotate_proxy: bool = True
+    blacklist_on_sms_timeout: bool = False
 
 
 @app.post("/api/settings")

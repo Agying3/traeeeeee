@@ -19,10 +19,10 @@ sys.path.insert(0, os.environ.get("TRAE_SLIDER_LIB", str(ROOT / "slider-captcha-
 import trae_pipeline_lib as lib
 from stage1_browser_captcha import PROXY_FILE, solve_slider, WAIT_SECONDS
 from page_diagnostics import PageDiagnostics
-from registration_control import emit, options, wait_sms
+from registration_control import emit, options, public_log, wait_sms
 
 DATA_DIR = pathlib.Path(os.environ.get("TRAE_DATA_DIR", str(ROOT / "tmp")))
-RUN_ID = time.strftime("%Y%m%d-%H%M%S") + "-afhttp-" + __import__("uuid").uuid4().hex[:8]
+RUN_ID = os.environ.get("TRAE_RUN_ID") or (time.strftime("%Y%m%d-%H%M%S") + "-afhttp-" + __import__("uuid").uuid4().hex[:8])
 RUN_DIR = DATA_DIR / "register-diagnostics" / RUN_ID
 TRACE = DATA_DIR / "http-trace" / (RUN_ID + ".jsonl")
 PROFILES = DATA_DIR / "cloak-profiles"
@@ -31,19 +31,81 @@ UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
 
 _trace_f = None
 
+# The worker must settle every acquired SMS number, including abrupt failures.
+_ACTIVE_HZ = None
+_ACTIVE_PHONE = ""
+_ACTIVE_ATTEMPT = os.environ.get("TRAE_ATTEMPT_ID", "")
+_SMS_SENT = False
+_RUN_SUCCESS = False
+
+
+def _set_number_state(hz, phone):
+    global _ACTIVE_HZ, _ACTIVE_PHONE, _SMS_SENT, _RUN_SUCCESS, _ACTIVE_ATTEMPT
+    _ACTIVE_HZ = hz
+    _ACTIVE_PHONE = phone
+    _ACTIVE_ATTEMPT = hz.attempt_id or _ACTIVE_ATTEMPT or __import__("uuid").uuid4().hex
+    _SMS_SENT = False
+    _RUN_SUCCESS = False
+
+
+def _mark_sms_sent():
+    global _SMS_SENT
+    _SMS_SENT = True
+    if _ACTIVE_HZ and _ACTIVE_ATTEMPT:
+        _ACTIVE_HZ._record("sms_dispatched", phone=_ACTIVE_PHONE, sms_sent=True, state="running")
+
+
+def _mark_run_success():
+    global _RUN_SUCCESS
+    _RUN_SUCCESS = True
+    if _ACTIVE_HZ and _ACTIVE_ATTEMPT:
+        _ACTIVE_HZ._record("credential_saved", phone=_ACTIVE_PHONE, credential_saved=True, state="completed")
+
+
+async def _settle_number():
+    global _ACTIVE_HZ, _ACTIVE_PHONE, _SMS_SENT, _RUN_SUCCESS
+    hz, phone, attempt = _ACTIVE_HZ, _ACTIVE_PHONE, _ACTIVE_ATTEMPT
+    if not hz or not phone or not attempt:
+        return
+    try:
+        from haozhu_sms import finish_attempt
+        allow_blacklist = os.environ.get("TRAE_HAOZHU_BLACKLIST", "0").lower() in ("1", "true", "yes")
+        result = finish_attempt(attempt, ledger=hz.ledger, client=hz, run_id=RUN_ID,
+                                allow_blacklist=allow_blacklist, reason=("success" if _RUN_SUCCESS else "worker_exit"))
+        if result.get("ok"):
+            pr(f"[i] 豪猪号 {phone} 已处置: {result.get('state')}")
+        else:
+            pr(f"[!] 豪猪号 {phone} 处置待恢复: {result.get('error_category') or result.get('skipped')}")
+    except Exception as exc:
+        pr(f"[!] 豪猪号处置记录失败: {type(exc).__name__}")
+    finally:
+        _ACTIVE_HZ = None
+        _ACTIVE_PHONE = ""
+        _SMS_SENT = False
+        _RUN_SUCCESS = False
+
 def pr(*a):
-    print(*a, flush=True)
-    message = " ".join(map(str, a))
+    message = public_log(" ".join(map(str, a)))
+    print(message, flush=True)
     if message.startswith(("[P", "[完成]")):
         emit(message[:140], status="running")
 
 def trace(kind, **kw):
     global _trace_f
+    from haozhu_ledger import _redact
+    # {意图：抓包原文只入独立证据；常规轨迹和进度仅保留脱敏摘要。}
+    if _ACTIVE_HZ:
+        _ACTIVE_HZ._record("trace_" + str(kind), raw_response=kw)
     if _trace_f is None:
         TRACE.parent.mkdir(parents=True, exist_ok=True)
         _trace_f = open(TRACE, "a", encoding="utf-8")
     rec = {"t": int(time.time() * 1000), "kind": kind}
-    rec.update(kw)
+    rec.update(_redact(kw))
+    for key, value in list(rec.items()):
+        if key in ("body", "req_body", "resp_body", "response", "stderr"):
+            rec[key] = "[evidence]"
+        elif isinstance(value, str):
+            rec[key] = public_log(value)
     _trace_f.write(json.dumps(rec, ensure_ascii=False) + "\n")
     _trace_f.flush()
 
@@ -72,7 +134,7 @@ def curl(method, url, idx, body=None, headers=None, timeout=30):
         out, tail = out.rsplit("\n__HTTP:", 1)
         status = tail.strip()
     trace("http", method=method, url=url, status=status, req_body=body,
-          resp_body=out[:4000], stderr=(r.stderr or "")[:200])
+          resp_body=out, stderr=(r.stderr or "")[:200])
     return status, out
 
 def send_code_url(extra=""):
@@ -80,7 +142,7 @@ def send_code_url(extra=""):
             "?passport_jssdk_version=3.0.11&passport_jssdk_type=normal&aid=711126&language=zh"
             "&account_sdk_source=web&mix_mode=1&fixed_mix_mode=1&mobile=" + extra)
 
-async def main():
+async def _main_impl():
     parser = argparse.ArgumentParser()
     parser.add_argument("proxy_index", type=int)
     parser.add_argument("--hz-uid", default="")
@@ -92,12 +154,18 @@ async def main():
     idx = args.proxy_index
 
     from haozhu_sms import build_client
-    hz = build_client({})
+    from haozhu_ledger import Ledger, receipt_hash
+    hz = build_client({}, ledger=Ledger(), attempt_id=_ACTIVE_ATTEMPT, run_id=RUN_ID)
+    hz.begin_attempt(proxy={"index": idx})
+    _set_number_state(hz, "")
     hz.ensure_login()
-    phone = args.phone or hz.get_phone(uid=args.hz_uid)
+    phone = (hz.adopt_phone(args.phone, from_attempt_id=os.environ.get("TRAE_REUSE_ATTEMPT_ID", ""))["phone"]
+             if args.phone else hz.get_phone_multi(uid=args.hz_uid))
+    _set_number_state(hz, phone)
     pr(f"[i] {'复用已取号码' if args.phone else '豪猪取号'}: {phone}")
     trace("phone", phone=phone)
-    emit("号码已取得", status="running", phone=phone)
+    emit("号码已取得", status="running", phone=phone, attempt_id=hz.attempt_id,
+         run_id=hz.run_id, sid=hz.sid, uid=hz.uid, account=hz.user)
 
     ip, port, user, pwd = load_proxy(idx)
     seed = lib.fingerprint_seed_for(idx)
@@ -169,6 +237,7 @@ async def main():
             "Content-Type": "application/x-www-form-urlencoded"}
     body = f"mix_mode=1&mobile={enc_phone(phone)}&type=3731&is6Digits=true&fixed_mix_mode=1"
     url1 = send_code_url(f"&fp={fp}&verifyFp={fp}") if fp else send_code_url()
+    hz._record("send_requested", phone=phone, stage="first_send", state="running")
     st, out = curl("POST", url1, idx, body, hdrs)
     pr(f"[P1] HTTP={st} {out[:120]}")
     conf = None
@@ -304,6 +373,7 @@ async def main():
     cookies = await ctx.cookies()
     cookie_hdr = "; ".join(f"{c['name']}={c['value']}" for c in cookies)
     hdrs["Cookie"] = cookie_hdr
+    hz._record("send_requested", phone=phone, stage="retry_send", state="running")
     st, out = curl("POST", send_code_url(f"&fp={fp}&verifyFp={fp}"), idx, body, hdrs)
     pr(f"[P3] HTTP={st} {out[:120]}")
     ticket = ""
@@ -314,6 +384,8 @@ async def main():
     if not ticket:
         pr("[X] P3 未拿到 mobile_ticket — 停")
         await ctx.close(); return 1
+    _mark_sms_sent()
+    hz._record("send_ticket", phone=phone, ticket=receipt_hash(ticket), sms_sent=True, state="running")
     pr(f"[P3] ★ mobile_ticket={ticket[:24]}... 短信应已下发")
 
     # ── 阶段4: 豪猪收码 → 页内 fetch sms_login（授权页上下文与浏览器 cookie） ──
@@ -328,6 +400,7 @@ async def main():
         await ctx.close(); return 1
     
     pr("[P4] 页内 fetch sms_login(授权页上下文)...")
+    hz._record("sms_login_requested", phone=phone, state="running")
     try:
         r_inpage = await page.evaluate(
             """async ({mob, code, csrf}) => {
@@ -350,6 +423,7 @@ async def main():
         pr(f"[X] 页内sms_login异常: {str(e)[:130]}")
         trace("sms_login_error", error=str(e)[:300])
         await ctx.close(); return 1
+    hz._record("post_login", phone=phone, state="logged_in")
     await asyncio.sleep(2)
     cookies = await ctx.cookies()
     login_cookies = {c["name"]: c["value"] for c in cookies}
@@ -524,7 +598,18 @@ async def main():
     out_dir = DATA_DIR / ("credentials" if os.environ.get("TRAE_DATA_DIR") else "register-credentials")
     out_dir.mkdir(parents=True, exist_ok=True)
     outp = out_dir / f"{RUN_ID}.json"
-    outp.write_text(json.dumps(credential, ensure_ascii=False, indent=1), encoding="utf-8")
+    hz._record("credential_write_requested", phone=phone, state="exporting")
+    temporary = outp.with_name(outp.name + "." + __import__("uuid").uuid4().hex + ".tmp")
+    try:
+        descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as destination:
+            json.dump(credential, destination, ensure_ascii=False, indent=1)
+            destination.flush()
+            os.fsync(destination.fileno())
+        os.replace(temporary, outp)
+    finally:
+        temporary.unlink(missing_ok=True)
+    _mark_run_success()
     pr(f"\n[完成] ★★ 注册号IDE凭证: {outp}")
     pr(f"[完成] uid={identity.get('uid')} phone={phone} expires={exchange.get('expires_ms')}")
     trace("credential_done", phone=phone, uid=identity.get("uid"), path=str(outp))
@@ -533,6 +618,14 @@ async def main():
     except Exception:
         pass
     return 0
+
+
+async def main():
+    try:
+        return await _main_impl()
+    finally:
+        await _settle_number()
+
 
 if __name__ == "__main__":
     sys.exit(asyncio.run(main()))

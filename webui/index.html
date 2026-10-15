@@ -189,6 +189,18 @@
         </div>
         <p style="color:var(--muted);margin:10px 0 0;">
           铁律：纯HTTP，浏览器仅滑块拖动；每号换指纹+换IP</p>
+        <h2 style="margin-top:18px;">批量入队</h2>
+        <div class="row">
+          <label>起始代理#
+            <input id="reg-batch-start" type="number" value="19" min="0">
+          </label>
+          <label>结束代理#
+            <input id="reg-batch-end" type="number" value="118" min="0">
+          </label>
+          <button id="btn-reg-batch">批量入队</button>
+        </div>
+        <p style="color:var(--muted);margin:10px 0 0;">
+          每个代理一条任务，一号一IP；一次最多500条</p>
       </div>
       <div class="card">
         <h2>引擎</h2>
@@ -201,6 +213,9 @@
     </div>
     <div class="card" style="margin-top:16px;">
       <h2>队列</h2>
+      <div class="row" style="margin-bottom:12px;">
+        <button id="btn-retry-failed" class="secondary">一键重试失败</button>
+      </div>
       <table>
         <thead><tr>
           <th>手机号</th><th>代理</th><th>阶段</th><th>状态</th><th>凭证</th><th>操作</th>
@@ -241,6 +256,25 @@
     <h1>豪猪接码</h1>
     <p class="lead">取号与收码的账号配置（凭据只存本机 data/）</p>
     <div class="metrics-row" id="haozhu-metrics"></div>
+    <div class="card" style="margin-bottom:16px;">
+      <h2>号码生命周期与预算</h2>
+      <p class="lead">接到码才产生平台计费条件；注册成功单独统计。预算按收码证据与入场单价估算，实际扣费以平台流水为准。</p>
+      <div class="metrics-row" id="ledger-metrics"></div>
+      <p id="ledger-balance" style="color:var(--muted)"></p>
+      <div class="row" style="flex-wrap:wrap;">
+        <button id="btn-hz-refresh" class="secondary">刷新平台余额</button>
+        <button id="btn-hz-recover" class="secondary">恢复清理遗留号码</button>
+        <label>追加预算（¥）<input id="budget-add" type="number" min="0.01" step="0.01" value="10"></label>
+        <button id="btn-budget-add" class="secondary">追加额度</button>
+      </div>
+      <p id="ledger-note" style="color:var(--muted)"></p>
+      <div style="overflow:auto"><table><thead><tr><th>号码</th><th>尝试</th><th>状态</th><th>项目/渠道</th><th>收码来源</th><th>错误</th></tr></thead>
+        <tbody id="held-body"></tbody></table></div>
+      <h3>待核对预算</h3>
+      <p style="color:var(--muted)">核对平台收码记录后填写依据；已存在平台收码证据的尝试会保留收码估算。</p>
+      <div style="overflow:auto"><table><thead><tr><th>尝试</th><th>预留</th><th>核对结果</th><th>依据</th><th>操作</th></tr></thead><tbody id="unresolved-body"></tbody></table></div>
+      <details style="margin-top:14px"><summary>审计事件（最近100条）</summary><div id="ledger-events" class="logs" style="margin-top:10px"></div></details>
+    </div>
     <div class="grid cols-2">
       <div class="card">
         <h2>鉴权</h2>
@@ -255,6 +289,9 @@
         </label>
         <label style="margin-top:10px;">对接码 UID（可选，锁低价渠道）
           <input id="hz-uid" placeholder="留空走默认渠道">
+        </label>
+        <label style="margin-top:10px;">对接码池（每行一个，取号失败自动换下一个）
+          <textarea id="hz-uids" placeholder="每行一个对接码&#10;如:&#10;168392&#10;170255" style="min-height:90px;font-family:Consolas,monospace;"></textarea>
         </label>
         <button id="btn-hz-save" style="margin-top:12px;">保存</button>
       </div>
@@ -388,6 +425,14 @@
         <label style="margin-top:10px;">最大重试次数
           <input id="set-max-retry" type="number" value="2" min="0">
         </label>
+        <label style="margin-top:10px;">成功目标（0为不限）<input id="set-target" type="number" min="0" value="0"></label>
+        <label style="margin-top:10px;">本批尝试上限（0为不限）<input id="set-attempts" type="number" min="0" value="2000"></label>
+        <label style="margin-top:10px;">同类连续失败暂停阈值（0为关闭）<input id="set-streak" type="number" min="0" value="15"></label>
+        <label style="margin-top:10px;">余额保护下限（¥）<input id="set-balance" type="number" min="0" step="0.01" value="1.1"></label>
+        <label style="margin-top:10px;">预算额度（¥，0为关闭）<input id="set-budget" type="number" min="0" step="0.01" value="0"></label>
+        <label style="margin-top:10px;">收码估算单价（¥）<input id="set-price" type="number" min="0.01" step="0.01" value="1.1"></label>
+        <label style="margin-top:10px;">重试间隔（秒）<input id="set-delay" type="number" min="0" value="5"></label>
+        <label style="margin-top:10px;">重试换代理<select id="set-rotate"><option value="1">开</option><option value="0">关</option></select></label>
         <button id="btn-set-save" style="margin-top:12px;">保存</button>
       </div>
     </div>
@@ -405,6 +450,8 @@
 <script>
 const $ = (id) => document.getElementById(id);
 const API = location.origin + '/api';
+const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const money = value => value == null ? '—' : '¥' + Number(value).toFixed(2);
 
 function toast(msg) {
   const t = $('toast'); t.textContent = msg; t.style.display = 'block';
@@ -417,7 +464,7 @@ async function api(path, opts) {
 }
 function metric(el, items) {
   el.innerHTML = items.map(([k, v, cls]) =>
-    `<div class="metric"><small>${k}</small><b class="${cls||''}">${v}</b></div>`).join('');
+    `<div class="metric"><small>${esc(k)}</small><b class="${esc(cls||'')}">${esc(v)}</b></div>`).join('');
 }
 
 /* ── 导航 ── */
@@ -438,20 +485,20 @@ async function loadWork() {
       ['成功率', s.done + s.fail ? Math.round(100 * s.done / (s.done + s.fail)) + '%' : '—'],
       ['凭证', s.creds || 0, 'ok'],
     ]);
-    $('engine-state').textContent = s.running ? '运行中' : '未启动';
+    $('engine-state').textContent = (s.running ? '运行中' : '已停止') + ` · 本批成功 ${s.batch_ok || 0} / 尝试 ${s.batch_attempts || 0}` + (s.stop_reason ? ' · ' + s.stop_reason : '');
     const tb = $('queue-body');
     tb.innerHTML = q.length ? q.map((t, i) => {
       const acts = [];
       if (t.status === 'waiting_code')
         acts.push(`<input class="code" data-i="${i}" placeholder="输码">` +
                   `<button class="secondary" data-code="${i}">续</button>`);
-      if (t.status === 'fail')
+      if (['fail','reconciliation_unknown'].includes(t.status))
         acts.push(`<button class="secondary" data-retry="${i}">重试</button>`);
       acts.push(`<button class="danger" data-rm="${i}">移除</button>`);
       return `<tr>
-      <td>${t.phone || '—'}</td><td>#${t.proxy ?? '—'}</td>
-      <td>${t.stage || '—'}</td>
-      <td><span class="tag ${t.status === 'running' ? 'run' : t.status === 'ok' ? 'ok' : t.status === 'fail' ? 'bad' : 'wait'}">${t.status || 'pending'}</span></td>
+      <td>${esc(t.phone || '—')}</td><td>#${esc(t.proxy ?? '—')}</td>
+      <td>${esc(t.stage || '—')}</td>
+      <td><span class="tag ${t.status === 'running' ? 'run' : t.status === 'ok' ? 'ok' : t.status === 'fail' ? 'bad' : 'wait'}">${esc(t.status || 'pending')}</span></td>
       <td>${t.cred ? '★' : ''}</td>
       <td>${acts.join(' ')}</td></tr>`;
     }).join('') : '<tr><td colspan="6" style="color:var(--muted)">空</td></tr>';
@@ -478,7 +525,24 @@ $('btn-reg-add').onclick = async () => {
     toast('已加入队列'); loadWork();
   } catch (e) { toast('失败: ' + e.message); }
 };
-$('btn-engine-start').onclick = async () => { try { await api('/engine/start', {method:'POST'}); toast('引擎启动'); loadWork(); } catch (e) { toast(e.message); } };
+$('btn-reg-batch').onclick = async () => {
+  const s = +$('reg-batch-start').value, e = +$('reg-batch-end').value;
+  if (!(s >= 0) || e < s) return toast('代理范围无效');
+  if (!confirm(`将代理 #${s}~#${e} 共 ${e - s + 1} 条任务入队？`)) return;
+  try {
+    const r = await api('/queue/batch', {method: 'POST', body: JSON.stringify({
+      proxy_start: s, proxy_end: e})});
+    toast(`已入队 ${r.queued} 条（队列共 ${r.total}）`); loadWork();
+  } catch (e2) { toast('失败: ' + e2.message); }
+};
+$('btn-retry-failed').onclick = async () => {
+  try {
+    const r = await api('/queue/retry-failed', {method: 'POST'});
+    toast(r.retried ? `已重排 ${r.retried} 条失败任务` : '没有可重试的失败任务');
+    loadWork();
+  } catch (e) { toast(e.message); }
+};
+$('btn-engine-start').onclick = async () => { try { const r = await api('/engine/start', {method:'POST'}); toast(r.ok ? '引擎启动' : r.reason); loadWork(); } catch (e) { toast(e.message); } };
 $('btn-engine-stop').onclick = async () => { try { await api('/engine/stop', {method:'POST'}); toast('引擎停止'); loadWork(); } catch (e) { toast(e.message); } };
 
 /* ── 豪猪 ── */
@@ -488,15 +552,17 @@ async function loadHaozhu() {
     const c = await api('/haozhu/config');
     $('hz-user').value = c.user || ''; $('hz-pass').value = '';
     $('hz-sid').value = c.sid || ''; $('hz-uid').value = c.uid || '';
+    if (document.activeElement !== $('hz-uids')) $('hz-uids').value = c.uids || '';
     let m = [['余额', c.balance === '' || c.balance === undefined ? '—' : '¥' + c.balance],
-             ['占用号', c.occupied === '' || c.occupied === undefined ? '—' : c.occupied],
+             ['平台字段 num', '待核实'],
+             ['对接码池', (c.uid_pool_count || 0) + ' 个渠道'],
              ['凭据', c.configured ? '已配' : '未配']];
     try {
       const ct = await api('/continuous');
       m.push(['今日加号', ct.added_today + '/' + (ct.config?.daily_max ?? '—')]);
       renderContinuous(ct);
     } catch (e) {}
-    metric($('haozhu-metrics'), m);
+    metric($('haozhu-metrics'), m); await loadLedger();
   } catch (e) {}
 }
 function renderContinuous(ct) {
@@ -508,19 +574,46 @@ function renderContinuous(ct) {
   if (document.activeElement !== $('ct-min-balance')) $('ct-min-balance').value = cfg.min_balance ?? 5;
   const on = cfg.enabled ? '<span class="tag ok">值班中</span>' : '<span class="tag">已停用</span>';
   const pause = ct.paused
-    ? `<span class="tag bad">暂停: ${PAUSE_TEXT[ct.paused] || ct.paused}</span>` : '';
+    ? `<span class="tag bad">暂停: ${esc(PAUSE_TEXT[ct.paused] || ct.paused)}</span>` : '';
   const bal = ct.balance === null || ct.balance === undefined ? '' : ` ¥${ct.balance}`;
   $('ct-status').innerHTML =
     `${on} ${pause} <span style="color:var(--muted);font-size:13px;">` +
     `今日加号 ${ct.added_today}/${cfg.daily_max ?? '—'} · 队列积压 ${ct.queue_active} · ` +
     `代理池 ${ct.proxy_total} · 豪猪余额${bal || ' —'}</span>`;
   $('ct-logs').innerHTML = (ct.logs || []).slice().reverse()
-    .map(l => `<div>${l}</div>`).join('') || '<div style="color:var(--muted)">暂无日志</div>';
+    .map(l => `<div>${esc(l)}</div>`).join('') || '<div style="color:var(--muted)">暂无日志</div>';
 }
+async function loadLedger(force = false) {
+  if (!force && (document.activeElement?.closest('#unresolved-body') ||
+      [...$('unresolved-body').querySelectorAll('input,select')].some(field => field.value))) return;
+  try {
+    const d = await api('/haozhu/ledger'), b = d.budget || {}, l = d.ledger || {};
+    metric($('ledger-metrics'), [['预算上限',money(b.limit)], ['收码估算',money(b.estimated_spent)],
+      ['在途/待核对',money(b.reserved)], ['预算可用',b.enabled ? money(b.available) : '未启用'],
+      ['待清理号码',(d.held || []).length], ['平台收码证据',l.receipt_counts?.platform ?? 0]]);
+    $('ledger-balance').textContent = '余额快照：' + money(d.balance) + (d.balance_updated ? ' · ' + new Date(d.balance_updated * 1000).toLocaleString() : ' · 尚无快照');
+    $('ledger-note').textContent = b.basis + '。释放仅表示结束占用；手动输码和收码状态未决时保留预算预留。';
+    $('held-body').innerHTML = (d.held || []).map(r => `<tr><td>${esc(r.phone)}</td><td title="${esc(r.attempt_id)}">${esc((r.attempt_id || '').slice(0,12))}</td><td>${esc(r.state)}</td><td>${esc(r.sid)} / ${esc(r.uid || '默认')}</td><td>${esc(r.code_source || '待收码')}</td><td>${esc(r.error_category || '')}</td></tr>`).join('') || '<tr><td colspan="6">暂无待清理号码</td></tr>';
+    const unresolved = d.unresolved || [], body = $('unresolved-body');
+    body.innerHTML = unresolved.map((r, i) => `<tr><td title="${esc(r.attempt_id)}">${esc(r.attempt_id.slice(0,12))}</td><td>${money(r.price/100)}</td><td><select data-outcome="${i}"><option value="">请选择</option><option value="yes">确认已收码</option><option value="no">确认未收码</option></select></td><td><input data-note="${i}" maxlength="200" placeholder="平台记录或其他核对依据"></td><td><button data-reconcile="${i}" class="secondary">提交核对</button></td></tr>`).join('') || '<tr><td colspan="5">暂无待核对预算</td></tr>';
+    body.querySelectorAll('[data-reconcile]').forEach(button => button.onclick = async () => {
+      const i = button.dataset.reconcile, received = body.querySelector(`[data-outcome="${i}"]`).value;
+      const note = body.querySelector(`[data-note="${i}"]`).value.trim();
+      if (!received || !note) return toast('请选择收码状态并填写核对依据');
+      try { await api('/haozhu/budget/reconcile', {method:'POST',body:JSON.stringify({attempt_id:unresolved[i].attempt_id,received:received==='yes',note})}); await loadLedger(true); toast('核对结果已记录'); }
+      catch(e) { toast(e.message); }
+    });
+    $('ledger-events').textContent = (d.events || []).map(e => JSON.stringify(e)).join('\n') || '暂无事件';
+  } catch(e) { $('ledger-note').textContent = '账本读取失败：' + e.message; }
+}
+$('btn-hz-refresh').onclick = async () => { try { await api('/haozhu/refresh',{method:'POST'}); await loadHaozhu(); toast('余额快照已保存'); } catch(e) { toast(e.message); } };
+$('btn-hz-recover').onclick = async () => { try { await api('/haozhu/recover',{method:'POST'}); await loadLedger(); toast('恢复清理完成，未确认结果保留待清理'); } catch(e) { toast(e.message); } };
+$('btn-budget-add').onclick = async () => { try { await api('/haozhu/budget',{method:'POST',body:JSON.stringify({amount:+$('budget-add').value})}); await loadLedger(); toast('预算额度已追加'); } catch(e) { toast(e.message); } };
 $('btn-hz-save').onclick = async () => {
   try { await api('/haozhu/config', {method: 'POST', body: JSON.stringify({
     user: $('hz-user').value, pass: $('hz-pass').value,
-    sid: $('hz-sid').value, uid: $('hz-uid').value})});
+    sid: $('hz-sid').value, uid: $('hz-uid').value,
+    uids: $('hz-uids').value})});
     toast('豪猪配置已保存'); loadHaozhu();
   } catch (e) { toast(e.message); }
 };
@@ -537,7 +630,7 @@ $('btn-hz-search').onclick = async () => {
     const r = await api('/haozhu/search?kw=' + encodeURIComponent($('hz-proj-key').value || ''));
     $('hz-projects').innerHTML = (r.items || []).map(p =>
       `<div style="padding:4px 0;border-bottom:1px solid var(--line,#eee);">` +
-      `<b>${p.sid}</b> ${p.name}</div>`).join('') ||
+      `<b>${esc(p.sid)}</b> ${esc(p.name)}</div>`).join('') ||
       '<div style="color:var(--muted)">无结果（需 tmp/haozhu.json 配 h5_session）</div>';
   } catch (e) { toast(e.message); }
 };
@@ -548,8 +641,8 @@ async function loadAccounts() {
     const a = await api('/credentials');
     metric($('acc-metrics'), [['凭证总数', a.items.length], ['已入网关', a.in_gateway]]);
     $('acc-body').innerHTML = a.items.length ? a.items.map(c => `<tr>
-      <td>${c.phone}</td><td>${c.uid}</td><td>${c.expires}</td>
-      <td>${c.credits ?? '—'}</td><td><span class="tag ok">${c.status || 'valid'}</span></td>
+      <td>${esc(c.phone)}</td><td>${esc(c.uid)}</td><td>${esc(c.expires)}</td>
+      <td>${esc(c.credits ?? '—')}</td><td><span class="tag ok">${esc(c.status || 'valid')}</span></td>
       <td>${c.in_gateway ? '<span class="tag ok">在库</span>' : '<span class="tag">未导</span>'}</td>
       </tr>`).join('') : '<tr><td colspan="6" style="color:var(--muted)">空</td></tr>';
   } catch (e) {}
@@ -565,7 +658,7 @@ async function loadProxy() {
       ['总数', p.items.length], ['可用', p.items.filter(x => x.ok !== false).length, 'ok'],
       ['失败', p.items.filter(x => x.ok === false).length, 'err']]);
     $('proxy-body').innerHTML = p.items.length ? p.items.map((x, i) => `<tr>
-      <td>${i + 1}</td><td>${x.line}</td>
+      <td>${i + 1}</td><td>${esc(x.line)}</td>
       <td>${x.ok === false ? '<span class="tag bad">失败</span>' : x.ok ? '<span class="tag ok">可用</span>' : '<span class="tag">未测</span>'}</td>
       <td>${x.used || 0} <button class="danger" data-prm="${i}" style="padding:2px 8px;font-size:12px;">删</button></td></tr>`).join('') : '<tr><td colspan="4" style="color:var(--muted)">空</td></tr>';
     $('proxy-body').querySelectorAll('[data-prm]').forEach(b => b.onclick = async () => {
@@ -625,13 +718,25 @@ async function loadSettings() {
     $('set-slider-retry').value = c.slider_retry ?? 2;
     $('set-retry').value = c.timeout_requeue ? '1' : '0';
     $('set-max-retry').value = c.max_retries ?? 2;
+    $('set-target').value = c.target_successes ?? 0;
+    $('set-attempts').value = c.max_batch_attempts ?? 2000;
+    $('set-streak').value = c.consecutive_failures ?? 15;
+    $('set-balance').value = c.min_balance ?? 1.1;
+    $('set-budget').value = c.budget_limit ?? 0;
+    $('set-price').value = c.sms_unit_price ?? 1.1;
+    $('set-delay').value = c.retry_delay_seconds ?? 5;
+    $('set-rotate').value = c.retry_rotate_proxy === false ? '0' : '1';
   } catch (e) {}
 }
 $('btn-set-save').onclick = async () => {
   try { await api('/settings', {method:'POST', body: JSON.stringify({
     workers: +$('set-workers').value, code_timeout_minutes: +$('set-code-timeout').value,
     slider_retry: +$('set-slider-retry').value,
-    timeout_requeue: $('set-retry').value === '1', max_retries: +$('set-max-retry').value})});
+    timeout_requeue: $('set-retry').value === '1', max_retries: +$('set-max-retry').value,
+    target_successes:+$('set-target').value, max_batch_attempts:+$('set-attempts').value,
+    consecutive_failures:+$('set-streak').value, min_balance:+$('set-balance').value,
+    budget_limit:+$('set-budget').value, sms_unit_price:+$('set-price').value,
+    retry_delay_seconds:+$('set-delay').value, retry_rotate_proxy:$('set-rotate').value === '1'})});
     toast('设置已保存'); loadSettings();
   } catch (e) { toast(e.message); }
 };
