@@ -74,6 +74,12 @@
   input,select,textarea { width:100%; border:1px solid rgb(148 163 184 / 0.32);
                           border-radius:12px; background:#fff; padding:9px 12px;
                           transition: all .2s ease-out; }
+  select:not([multiple]) { appearance:none; padding-right:38px;
+    background-color:#fff;
+    background-image:linear-gradient(45deg,transparent 50%,#64748b 50%),linear-gradient(135deg,#64748b 50%,transparent 50%);
+    background-position:calc(100% - 17px) 50%,calc(100% - 12px) 50%;
+    background-size:5px 5px,5px 5px; background-repeat:no-repeat; }
+  select option { background:#fff; color:#1f2937; }
   input:focus, select:focus, textarea:focus {
     border-color: var(--luoyv-brand);
     box-shadow: 0 0 0 3px rgb(249 115 22 / 0.16);
@@ -203,7 +209,18 @@
   #haozhu tbody tr:hover { background:#fafbfc; }
   #hz-session-state { padding:12px 14px; border-radius:9px; background:#f4f7fa; line-height:1.75; }
   #hz-session-feedback:empty, #hz-channel-summary:empty { display:none; }
-  .queue-scroll { max-height:320px; overflow:auto; border:1px solid rgb(148 163 184 / .2); border-radius:10px; }
+  .queue-scroll { position:relative; max-height:320px; overflow:auto; border:1px solid rgb(148 163 184 / .2); border-radius:10px; }
+  .queue-head { display:inline-flex; align-items:center; gap:5px; padding:3px 6px; border:0; border-radius:7px; background:transparent; color:#687587; box-shadow:none; font-size:12px; }
+  .queue-head:hover:not(:disabled) { background:#ffedd5; color:var(--luoyv-brand-strong); box-shadow:none; transform:none; }
+  .queue-head span { color:var(--luoyv-brand-strong); font-size:13px; }
+  .queue-filter-menu { position:fixed; z-index:20; min-width:190px; max-width:260px; max-height:240px; overflow:auto; padding:10px; border:1px solid rgb(148 163 184 / .28); border-radius:10px; background:#fff; box-shadow:0 14px 30px rgb(15 23 42 / .14); }
+  .queue-filter-menu[hidden] { display:none; }
+  #haozhu .queue-filter-menu label { display:flex; align-items:center; gap:7px; padding:6px 4px; color:#475569; font-size:12px; }
+  #haozhu .queue-filter-menu input[type=checkbox] { width:auto; accent-color:var(--accent); }
+  .queue-head.filter-active { color:var(--luoyv-brand-strong); background:#ffedd5; }
+  .queue-filter-menu input[type=text] { margin-bottom:6px; }
+  .queue-filter-actions { display:flex; gap:6px; margin-top:6px; }
+  .queue-filter-actions button { flex:1; padding:6px 8px; font-size:12px; }
   .queue-scroll table { min-width:760px; }
   .queue-scroll thead th { position:sticky; top:0; z-index:1; background:#f7f9fb; box-shadow:0 1px 0 var(--line); }
   @media (max-width:1100px) {
@@ -317,10 +334,10 @@
         <button id="btn-retry-failed" class="secondary">一键重试失败</button>
       </div>
       <p style="color:var(--muted);margin:10px 0 0;">注册使用独立注册代理；浏览器仅用于滑块，注册和凭证获取走 HTTP。每号独立指纹与 IP。</p>
-      <h3>注册队列</h3><label style="max-width:220px;margin:0 0 12px;">排序<select id="queue-sort"><option value="added-desc">最新加入</option><option value="added-asc">最早加入</option><option value="status">按状态</option><option value="proxy">按代理</option><option value="phone">按手机号</option></select></label>
-      <div class="row" style="margin-bottom:12px;"><span id="hz-engine-state" style="color:var(--muted)"></span></div>
-      <div class="queue-scroll"><table><thead><tr><th>手机号</th><th>代理</th><th>阶段</th><th>状态</th><th>凭证</th><th>操作</th></tr></thead>
-        <tbody id="queue-body"><tr><td colspan="6" style="color:var(--muted)">空</td></tr></tbody></table></div>
+      <h3>注册队列</h3>
+      <div class="row" style="margin-bottom:12px;"><span id="hz-engine-state" style="color:var(--muted)"></span><span id="queue-filter-summary" style="color:var(--muted);font-size:12px;"></span></div>
+      <div class="queue-scroll"><table><thead><tr><th><button class="queue-head" data-queue-sort="phone">手机号 <span>↕</span></button><button class="queue-head" data-queue-filter="phone" aria-label="筛选手机号">▾</button></th><th><button class="queue-head" data-queue-sort="proxy">代理 <span>↕</span></button><button class="queue-head" data-queue-filter="proxy" aria-label="筛选代理">▾</button></th><th><button class="queue-head" data-queue-sort="stage">阶段 <span>↕</span></button><button class="queue-head" data-queue-filter="stage" aria-label="筛选阶段">▾</button></th><th><button class="queue-head" data-queue-sort="status">状态 <span>↕</span></button><button class="queue-head" data-queue-filter="status" aria-label="筛选状态">▾</button></th><th><button class="queue-head" data-queue-sort="credential">凭证 <span>↕</span></button><button class="queue-head" data-queue-filter="credential" aria-label="筛选凭证">▾</button></th><th>操作</th></tr></thead>
+        <tbody id="queue-body"><tr><td colspan="6" style="color:var(--muted)">空</td></tr></tbody></table><div id="queue-filter-menu" class="queue-filter-menu" hidden></div></div>
     </div>
     <div class="grid hz-workspace">
       <div class="card" id="hz-auth">
@@ -618,8 +635,106 @@ document.querySelectorAll('aside button[data-page]').forEach(b => b.onclick = ()
 window.addEventListener('hashchange', () => showPage(location.hash.slice(1)));
 
 /* ── 工作台 ── */
+let queueData = [];
+let queueSortKey = 'added', queueSortDirection = -1;
+const queueFilters = {phone:'', proxy:null, stage:null, status:null, credential:null};
+const queueStatusRank = {running:0, waiting_code:1, fail:2, reconciliation_unknown:3, pending:4, ok:5};
+function queueField(task, key) {
+  if (key === 'credential') return task.cred ? '有凭证' : '无凭证';
+  return String(task[key] ?? '—');
+}
+function renderQueueRows() {
+  const tb = $('queue-body');
+  const rows = queueData.map((task, index) => ({task, index})).filter(({task}) => {
+    if (queueFilters.phone && !String(task.phone || '').toLowerCase().includes(queueFilters.phone.toLowerCase())) return false;
+    for (const key of ['proxy','stage','status','credential']) {
+      const chosen = queueFilters[key];
+      if (chosen && !chosen.has(queueField(task, key))) return false;
+    }
+    return true;
+  });
+  rows.sort((a,b) => {
+    let result = 0;
+    if (queueSortKey === 'added') result = (Number(a.task.added) || a.index) - (Number(b.task.added) || b.index);
+    else if (queueSortKey === 'status') result = (queueStatusRank[a.task.status] ?? 9) - (queueStatusRank[b.task.status] ?? 9);
+    else if (queueSortKey === 'proxy') result = (Number(a.task.proxy) || 0) - (Number(b.task.proxy) || 0);
+    else if (queueSortKey === 'credential') result = Number(!!a.task.cred) - Number(!!b.task.cred);
+    else result = queueField(a.task, queueSortKey).localeCompare(queueField(b.task, queueSortKey), 'zh-CN', {numeric:true});
+    return result * queueSortDirection || a.index - b.index;
+  });
+  tb.innerHTML = rows.length ? rows.map(({task:t,index:i}) => {
+    const acts = [];
+    if (t.status === 'waiting_code') acts.push(`<input class="code" data-i="${i}" placeholder="输码"><button class="secondary" data-code="${i}">续</button>`);
+    if (['fail','reconciliation_unknown'].includes(t.status)) acts.push(`<button class="secondary" data-retry="${i}">重试</button>`);
+    acts.push(`<button class="danger" data-rm="${i}">移除</button>`);
+    return `<tr><td>${esc(t.phone || '—')}</td><td>#${esc(t.proxy ?? '—')}</td><td>${esc(t.stage || '—')}</td><td><span class="tag ${t.status === 'running' ? 'run' : t.status === 'ok' ? 'ok' : t.status === 'fail' ? 'bad' : 'wait'}">${esc(t.status || 'pending')}</span></td><td>${t.cred ? '★' : ''}</td><td>${acts.join(' ')}</td></tr>`;
+  }).join('') : '<tr><td colspan="6" style="color:var(--muted)">无匹配任务</td></tr>';
+  const active = Object.values(queueFilters).filter(value => value && (value instanceof Set ? value.size : true)).length;
+  $('queue-filter-summary').textContent = active ? `筛选后 ${rows.length} / ${queueData.length} 条` : `共 ${queueData.length} 条`;
+  bindQueueActions();
+}
+function bindQueueActions() {
+  const tb = $('queue-body');
+  tb.querySelectorAll('[data-code]').forEach(button => button.onclick = async () => {
+    const index = +button.dataset.code, input = tb.querySelector(`.code[data-i="${index}"]`);
+    if (!input.value.trim()) return toast('先填验证码');
+    try { await api('/queue/code', {method:'POST',body:JSON.stringify({idx:index,code:input.value.trim()})}); toast('已提交'); loadWork(); }
+    catch(error) { toast(error.message); }
+  });
+  tb.querySelectorAll('[data-retry]').forEach(button => button.onclick = async () => {
+    try { await api('/queue/retry', {method:'POST',body:JSON.stringify({idx:+button.dataset.retry})}); toast('已重排'); loadWork(); }
+    catch(error) { toast(error.message); }
+  });
+  tb.querySelectorAll('[data-rm]').forEach(button => button.onclick = async () => {
+    try { await api('/queue/remove', {method:'POST',body:JSON.stringify({idx:+button.dataset.rm})}); loadWork(); }
+    catch(error) { toast(error.message); }
+  });
+}
+function openQueueFilter(key, button) {
+  const menu = $('queue-filter-menu');
+  if (!menu.hidden && menu.dataset.key === key) { menu.hidden = true; return; }
+  menu.dataset.key = key;
+  if (key === 'phone') {
+    menu.innerHTML = `<label>包含手机号<input type="text" data-phone-filter value="${esc(queueFilters.phone)}" placeholder="输入手机号片段"></label><div class="queue-filter-actions"><button class="secondary" data-filter-reset>清除</button></div>`;
+  } else {
+    const values = [...new Set(queueData.map(task => queueField(task,key)))].sort((a,b) => a.localeCompare(b,'zh-CN',{numeric:true}));
+    const chosen = queueFilters[key];
+    menu.innerHTML = `<div class="queue-filter-actions"><button class="secondary" data-filter-all>全选</button><button class="secondary" data-filter-none>清空</button></div>` +
+      values.map(value => `<label><input type="checkbox" data-filter-value="${esc(value)}" ${!chosen || chosen.has(value) ? 'checked' : ''}>${esc(value)}</label>`).join('');
+  }
+  menu.hidden = false;
+  const rect = button.getBoundingClientRect(), width = menu.offsetWidth, height = menu.offsetHeight;
+  menu.style.left = `${Math.max(8,Math.min(rect.left,innerWidth-width-8))}px`;
+  menu.style.top = `${Math.max(8,Math.min(rect.bottom+4,innerHeight-height-8))}px`;
+  const phone = menu.querySelector('[data-phone-filter]');
+  if (phone) {
+    phone.oninput = () => { queueFilters.phone = phone.value.trim(); renderQueueRows(); };
+    menu.querySelector('[data-filter-reset]').onclick = () => { queueFilters.phone = ''; phone.value = ''; renderQueueRows(); };
+  } else {
+    const update = () => {
+      const selected = new Set([...menu.querySelectorAll('[data-filter-value]:checked')].map(input => input.dataset.filterValue));
+      const total = menu.querySelectorAll('[data-filter-value]').length;
+      queueFilters[key] = selected.size === total ? null : selected;
+      renderQueueRows();
+    };
+    menu.querySelectorAll('[data-filter-value]').forEach(input => input.onchange = update);
+    menu.querySelector('[data-filter-all]').onclick = () => { menu.querySelectorAll('[data-filter-value]').forEach(input => input.checked = true); update(); };
+    menu.querySelector('[data-filter-none]').onclick = () => { menu.querySelectorAll('[data-filter-value]').forEach(input => input.checked = false); update(); };
+  }
+}
+document.querySelectorAll('[data-queue-sort]').forEach(button => button.onclick = () => {
+  const key = button.dataset.queueSort;
+  queueSortDirection = queueSortKey === key ? -queueSortDirection : 1;
+  queueSortKey = key;
+  document.querySelectorAll('[data-queue-sort] span').forEach(span => span.textContent = '↕');
+  button.querySelector('span').textContent = queueSortDirection === 1 ? '↑' : '↓';
+  loadWork();
+});
+document.querySelectorAll('[data-queue-filter]').forEach(button => button.onclick = event => { event.stopPropagation(); openQueueFilter(button.dataset.queueFilter,button); });
+document.addEventListener('click', event => { if (!event.target.closest('#queue-filter-menu') && !event.target.closest('[data-queue-filter]')) $('queue-filter-menu').hidden = true; });
+
 async function loadWork() {
-  if (document.activeElement?.matches('#queue-body input')) return;
+  if (document.activeElement?.matches('#queue-body input') || !$('queue-filter-menu').hidden) return;
   try {
     const s = await api('/engine/state');
     const q = s.queue || [];
@@ -639,7 +754,10 @@ async function loadWork() {
     } catch { $('upstream-state').textContent = '号池状态读取失败'; }
     const tb = $('queue-body');
     if (!tb) return;
-    const mode = $('queue-sort')?.value || 'added-desc';
+    queueData = q;
+     renderQueueRows();
+     return;
+     const mode = 'added-desc';
     const statusRank = {running:0, waiting_code:1, fail:2, reconciliation_unknown:3, pending:4, ok:5};
     const rows = q.map((task, index) => ({task, index}));
     rows.sort((a, b) => {
@@ -682,10 +800,6 @@ async function loadWork() {
     });
   } catch (e) { metric($('work-metrics'), [['引擎', '未启动', 'err']]); }
 }
-const queueSort = $('queue-sort');
-const savedQueueSort = localStorage.getItem('trae-queue-sort');
-if ([...queueSort.options].some(option => option.value === savedQueueSort)) queueSort.value = savedQueueSort;
-queueSort.onchange = () => { localStorage.setItem('trae-queue-sort', queueSort.value); loadWork(); };
 $('btn-upstream-key').onclick = async () => {
   try { await api('/upstream/key', {method:'POST', body:JSON.stringify({api_key:$('upstream-key').value.trim()})}); $('upstream-key').value = ''; $('upstream-key-state').textContent = '上游 Key 已保存；NewAPI 地址为当前服务 /v1'; toast('上游 Key 已保存'); }
   catch (e) { toast(e.message); }
