@@ -174,7 +174,7 @@
   #haozhu .card h3 { font-size:14px; margin:24px 0 10px; }
   #haozhu .card p { font-size:13px; line-height:1.7; }
   #haozhu .grid { gap:20px; align-items:start; }
-  #haozhu .hz-workspace { grid-template-columns:minmax(0,1fr); }
+  #haozhu .hz-workspace { grid-template-columns:minmax(340px,.85fr) minmax(0,1.6fr); align-items:start; }
   .hz-auth-fields { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:14px 18px; align-items:start; }
   .hz-field-wide { grid-column:span 2; }
   .hz-field-full { grid-column:1/-1; margin:0; }
@@ -229,6 +229,9 @@
   .table-filter-card > div[style*="overflow:auto"] { position:relative; max-height:420px; overflow:auto; border:1px solid rgb(148 163 184 / .2); border-radius:10px; }
   .table-filter-card table { min-width:760px; }
   .table-filter-card thead th { position:sticky; top:0; z-index:1; background:#f7f9fb; box-shadow:0 1px 0 var(--line); }
+  @media (max-width:1500px) {
+    #haozhu .hz-workspace { grid-template-columns:minmax(0,1fr); }
+  }
   @media (max-width:1100px) {
     .app { grid-template-columns:190px minmax(0,1fr); }
     #haozhu .cols-2 { grid-template-columns:minmax(0,1fr); }
@@ -381,7 +384,8 @@
         <p id="hz-project-status" role="status" aria-live="polite">输入项目关键词后点击搜索；查询使用豪猪 H5 会话。</p>
         <div id="hz-projects" style="margin-top:12px;"></div>
       </div>
-          <div class="card table-filter-card" id="hz-channels">
+    </div>
+    <div class="card table-filter-card" id="hz-channels" style="margin-top:20px;">
       <h2>对接码渠道</h2>
       <p style="color:var(--muted)">先查询价格与库存，按需加入豪猪账户，再勾选保存到本地轮换池。取号使用数字项目 ID；查询标识只用于搜索渠道。保存本地配置后仍需启动注册任务。</p>
       <div class="row" style="flex-wrap:wrap;align-items:center;gap:16px;">
@@ -396,9 +400,8 @@
         <button id="btn-hz-select">保存所选到本地渠道池</button>
         <button id="btn-hz-clear" class="secondary">清空本地渠道池</button>
       </div>
-      </div>
     </div>
-    <div class="card" style="margin-top:20px;">
+    <div class="card table-filter-card" id="ledger-card" style="margin-top:20px;">
       <h2>号码生命周期与预算</h2>
       <p class="lead">接到码才产生平台计费条件；注册成功单独统计。预算按收码证据与入场单价估算，实际扣费以平台流水为准。</p>
       <div class="metrics-row" id="ledger-metrics"></div>
@@ -410,11 +413,12 @@
         <button id="btn-budget-add" class="secondary">追加额度</button>
       </div>
       <p id="ledger-note" style="color:var(--muted)"></p>
-      <div style="overflow:auto"><table><thead><tr><th>号码</th><th>尝试</th><th>状态</th><th>项目/渠道</th><th>收码来源</th><th>错误</th></tr></thead>
+      <div style="overflow:auto"><table><thead><tr><th><button class="queue-head" data-held-sort="phone">号码 <span>↕</span></button><button class="queue-head" data-held-filter="phone" aria-label="筛选号码">▾</button></th><th><button class="queue-head" data-held-sort="attempt">尝试 <span>↕</span></button></th><th><button class="queue-head" data-held-sort="state">状态 <span>↕</span></button><button class="queue-head" data-held-filter="state" aria-label="筛选状态">▾</button></th><th><button class="queue-head" data-held-sort="sid">项目/渠道 <span>↕</span></button><button class="queue-head" data-held-filter="sid" aria-label="筛选项目">▾</button></th><th><button class="queue-head" data-held-sort="source">收码来源 <span>↕</span></button><button class="queue-head" data-held-filter="source" aria-label="筛选来源">▾</button></th><th><button class="queue-head" data-held-sort="error">错误 <span>↕</span></button><button class="queue-head" data-held-filter="error" aria-label="筛选错误">▾</button></th></tr></thead>
         <tbody id="held-body"></tbody></table></div>
+      <div id="held-filter-menu" class="queue-filter-menu" hidden></div>
       <h3>待核对预算</h3>
       <p style="color:var(--muted)">核对平台收码记录后填写依据；已存在平台收码证据的尝试会保留收码估算。</p>
-      <div style="overflow:auto"><table><thead><tr><th>尝试</th><th>预留</th><th>核对结果</th><th>依据</th><th>操作</th></tr></thead><tbody id="unresolved-body"></tbody></table></div>
+      <div style="overflow:auto"><table><thead><tr><th><button class="queue-head" data-unres-sort="attempt">尝试 <span>↕</span></button></th><th><button class="queue-head" data-unres-sort="reserved">预留 <span>↕</span></button></th><th>核对结果</th><th>依据</th><th>操作</th></tr></thead><tbody id="unresolved-body"></tbody></table></div>
       <details style="margin-top:14px"><summary>审计事件（最近100条）</summary><div id="ledger-events" class="logs" style="margin-top:10px"></div></details>
     </div>
     <div class="card" style="margin-top:20px;">
@@ -855,7 +859,7 @@ $('btn-engine-start').onclick = async () => { try { const r = await api('/engine
 $('btn-engine-stop').onclick = async () => { try { await api('/engine/stop', {method:'POST'}); toast('引擎停止'); loadWork(); } catch (e) { toast(e.message); } };
 
 /* ── 豪猪 ── */
-const PAUSE_TEXT = {daily: '今日上限', balance: '余额不足', proxy: '代理池空'};
+const PAUSE_TEXT = {daily: '今日加号上限', balance: '豪猪余额不足', proxy: '代理池全部冷却或占用', balance_unknown: '余额未知（刷新后恢复）', engine_halted: '引擎连续失败停止'};
 let hzDraft = false, hzChannels = [], hzSearchRequest = 0, hzChannelRequest = 0;
 let hzChosenChannels = new Set();
 for (const id of ['hz-user','hz-pass','hz-token','hz-session','hz-sid','hz-uid','hz-uids']) {
@@ -906,13 +910,77 @@ function renderContinuous(ct) {
   $('ct-status').innerHTML =
     `${on} ${pause} <span style="color:var(--muted);font-size:13px;">` +
     `今日加号 ${ct.added_today}/${cfg.daily_max ?? '—'} · 队列积压 ${ct.queue_active} · ` +
-    `代理池 ${ct.proxy_total} · 豪猪余额${bal || ' —'}</span>`;
+    `代理池 ${ct.proxy_available ?? '—'}/${ct.proxy_total ?? '—'} 可用 · 豪猪余额${bal || ' —'}</span>`;
   $('ct-logs').innerHTML = (ct.logs || []).slice().reverse()
     .map(l => `<div>${esc(l)}</div>`).join('') || '<div style="color:var(--muted)">暂无日志</div>';
 }
+const heldTable = bindTableSortFilter(
+  'held', 'held-filter-menu', '#ledger-card',
+  ['phone', 'attempt', 'state', 'sid', 'source', 'error'],
+  {phone: {}, state: {}, sid: {}, source: {}, error: {}},
+  (row, key) => {
+    if (key === 'phone') return String(row.phone || '—');
+    if (key === 'attempt') return String((row.attempt_id || '').slice(0, 12));
+    if (key === 'state') return String(row.state || '—');
+    if (key === 'sid') return `${row.sid} / ${row.uid || '默认'}`;
+    if (key === 'source') return row.code_source || '待收码';
+    return String(row.error_category || '—');
+  },
+  () => renderHeldRows(),
+  {
+    phone: (a, b) => String(a.phone || '').localeCompare(String(b.phone || ''), 'zh-CN', {numeric:true}),
+    attempt: (a, b) => String(a.attempt_id || '').localeCompare(String(b.attempt_id || ''), 'zh-CN'),
+    state: (a, b) => heldField(a, 'state').localeCompare(heldField(b, 'state'), 'zh-CN'),
+    sid: (a, b) => heldField(a, 'sid').localeCompare(heldField(b, 'sid'), 'zh-CN'),
+    source: (a, b) => heldField(a, 'source').localeCompare(heldField(b, 'source'), 'zh-CN'),
+    error: (a, b) => heldField(a, 'error').localeCompare(heldField(b, 'error'), 'zh-CN')
+  });
+function heldField(row, key) {
+  if (key === 'state') return String(row.state || '—');
+  if (key === 'sid') return `${row.sid} / ${row.uid || '默认'}`;
+  if (key === 'source') return row.code_source || '待收码';
+  return String(row.error_category || '—');
+}
+let heldRows = [];
+function renderHeldRows() {
+  const rows = heldTable.apply(heldRows);
+  $('held-body').innerHTML = rows.length ? rows.map(r => `<tr><td>${esc(r.phone)}</td><td title="${esc(r.attempt_id)}">${esc((r.attempt_id || '').slice(0,12))}</td><td>${esc(r.state)}</td><td>${esc(r.sid)} / ${esc(r.uid || '默认')}</td><td>${esc(r.code_source || '待收码')}</td><td>${esc(r.error_category || '')}</td></tr>`).join('') : '<tr><td colspan="6" style="color:var(--muted)">暂无待清理号码</td></tr>';
+}
+const unresolvedTable = bindTableSortFilter(
+  'unres', 'unresolved-filter-menu', '#ledger-card',
+  ['attempt', 'reserved'], {},
+  (row, key) => key === 'attempt' ? String(row.attempt_id || '').slice(0, 12) : String(row.price == null ? '未知' : (row.price / 100).toFixed(2)),
+  () => renderUnresolvedRows(),
+  {
+    attempt: (a, b) => String(a.attempt_id || '').localeCompare(String(b.attempt_id || ''), 'zh-CN'),
+    reserved: (a, b) => (a.price ?? -1) - (b.price ?? -1)
+  });
+let unresolvedRows = [], unresolvedDrafts = {};
+function renderUnresolvedRows() {
+  const body = $('unresolved-body');
+  const rows = unresolvedTable.apply(unresolvedRows);
+  body.innerHTML = rows.length ? rows.map(r => {
+    const draft = unresolvedDrafts[r.attempt_id] || {};
+    return `<tr><td title="${esc(r.attempt_id)}">${esc(r.attempt_id.slice(0,12))}</td><td>${money(r.price/100)}</td><td><select data-outcome-id="${esc(r.attempt_id)}"><option value="">请选择</option><option value="yes" ${draft.outcome === 'yes' ? 'selected' : ''}>确认已收码</option><option value="no" ${draft.outcome === 'no' ? 'selected' : ''}>确认未收码</option></select></td><td><input data-note-id="${esc(r.attempt_id)}" maxlength="200" placeholder="平台记录或其他核对依据" value="${esc(draft.note || '')}"></td><td><button data-reconcile-id="${esc(r.attempt_id)}" class="secondary">提交核对</button></td></tr>`;
+  }).join('') : '<tr><td colspan="5" style="color:var(--muted)">暂无待核对预算</td></tr>';
+  body.querySelectorAll('[data-outcome-id]').forEach(sel => sel.onchange = () => {
+    unresolvedDrafts[sel.dataset.outcomeId] = unresolvedDrafts[sel.dataset.outcomeId] || {};
+    unresolvedDrafts[sel.dataset.outcomeId].outcome = sel.value;
+  });
+  body.querySelectorAll('[data-note-id]').forEach(input => input.oninput = () => {
+    unresolvedDrafts[input.dataset.noteId] = unresolvedDrafts[input.dataset.noteId] || {};
+    unresolvedDrafts[input.dataset.noteId].note = input.value;
+  });
+  body.querySelectorAll('[data-reconcile-id]').forEach(button => button.onclick = async () => {
+    const attemptId = button.dataset.reconcileId, draft = unresolvedDrafts[attemptId] || {};
+    const received = draft.outcome, note = (draft.note || '').trim();
+    if (!received || !note) return toast('请选择收码状态并填写核对依据');
+    try { await api('/haozhu/budget/reconcile', {method:'POST',body:JSON.stringify({attempt_id:attemptId,received:received==='yes',note})}); delete unresolvedDrafts[attemptId]; await loadLedger(true); toast('核对结果已记录'); }
+    catch(e) { toast(e.message); }
+  });
+}
 async function loadLedger(force = false) {
-  if (!force && (document.activeElement?.closest('#unresolved-body') ||
-      [...$('unresolved-body').querySelectorAll('input,select')].some(field => field.value))) return;
+  if (!force && document.activeElement?.closest('#unresolved-body')) return;
   try {
     const d = await api('/haozhu/ledger'), b = d.budget || {}, l = d.ledger || {};
     metric($('ledger-metrics'), [['预算上限',money(b.limit)], ['收码估算',money(b.estimated_spent)],
@@ -920,16 +988,11 @@ async function loadLedger(force = false) {
       ['待清理号码',(d.held || []).length], ['平台收码证据',l.receipt_counts?.platform ?? 0]]);
     $('ledger-balance').textContent = '余额快照：' + money(d.balance) + (d.balance_updated ? ' · ' + new Date(d.balance_updated * 1000).toLocaleString() : ' · 尚无快照');
     $('ledger-note').textContent = b.basis + '。释放仅表示结束占用；手动输码和收码状态未决时保留预算预留。';
-    $('held-body').innerHTML = (d.held || []).map(r => `<tr><td>${esc(r.phone)}</td><td title="${esc(r.attempt_id)}">${esc((r.attempt_id || '').slice(0,12))}</td><td>${esc(r.state)}</td><td>${esc(r.sid)} / ${esc(r.uid || '默认')}</td><td>${esc(r.code_source || '待收码')}</td><td>${esc(r.error_category || '')}</td></tr>`).join('') || '<tr><td colspan="6">暂无待清理号码</td></tr>';
-    const unresolved = d.unresolved || [], body = $('unresolved-body');
-    body.innerHTML = unresolved.map((r, i) => `<tr><td title="${esc(r.attempt_id)}">${esc(r.attempt_id.slice(0,12))}</td><td>${money(r.price/100)}</td><td><select data-outcome="${i}"><option value="">请选择</option><option value="yes">确认已收码</option><option value="no">确认未收码</option></select></td><td><input data-note="${i}" maxlength="200" placeholder="平台记录或其他核对依据"></td><td><button data-reconcile="${i}" class="secondary">提交核对</button></td></tr>`).join('') || '<tr><td colspan="5">暂无待核对预算</td></tr>';
-    body.querySelectorAll('[data-reconcile]').forEach(button => button.onclick = async () => {
-      const i = button.dataset.reconcile, received = body.querySelector(`[data-outcome="${i}"]`).value;
-      const note = body.querySelector(`[data-note="${i}"]`).value.trim();
-      if (!received || !note) return toast('请选择收码状态并填写核对依据');
-      try { await api('/haozhu/budget/reconcile', {method:'POST',body:JSON.stringify({attempt_id:unresolved[i].attempt_id,received:received==='yes',note})}); await loadLedger(true); toast('核对结果已记录'); }
-      catch(e) { toast(e.message); }
-    });
+    $('held-body').innerHTML = '';
+    heldRows = d.held || [];
+    renderHeldRows();
+    unresolvedRows = d.unresolved || [];
+    renderUnresolvedRows();
     $('ledger-events').textContent = (d.events || []).map(e => JSON.stringify(e)).join('\n') || '暂无事件';
   } catch(e) { $('ledger-note').textContent = '账本读取失败：' + e.message; }
 }
@@ -1161,8 +1224,11 @@ function bindTableSortFilter(prefix, menuId, cardSelector, sortKeys, filterKeys,
     m.style.top = `${below + m.offsetHeight > box.height && fits > 0 ? fits : below}px`;
   }
   let anchorButton = null;
-  window.addEventListener('scroll', () => { if (!menu().hidden && anchorButton) position(anchorButton); }, {passive:true});
-  window.addEventListener('resize', () => { menu().hidden = true; anchorButton = null; });
+  const menuEl = document.getElementById(menuId);  // 无筛选列的表可不提供菜单 DOM
+  if (menuEl) {
+    window.addEventListener('scroll', () => { if (!menu().hidden && anchorButton) position(anchorButton); }, {passive:true});
+    window.addEventListener('resize', () => { menu().hidden = true; anchorButton = null; });
+  }
   function open(key, button) {
     const m = menu();
     if (!m.hidden && m.dataset.key === key) { m.hidden = true; anchorButton = null; return; }
@@ -1196,9 +1262,9 @@ function bindTableSortFilter(prefix, menuId, cardSelector, sortKeys, filterKeys,
   });
   document.querySelectorAll(`[data-${prefix}-filter]`).forEach(button => button.onclick = event => {
     event.stopPropagation();
-    open(button.getAttribute(`data-${prefix}-filter`), button);
+    if (menuEl) open(button.getAttribute(`data-${prefix}-filter`), button);
   });
-  document.addEventListener('click', event => {
+  if (menuEl) document.addEventListener('click', event => {
     if (!event.target.closest(`#${menuId}`) && !event.target.closest(`[data-${prefix}-filter]`)) {
       menu().hidden = true; anchorButton = null;
     }
