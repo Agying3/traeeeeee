@@ -224,6 +224,11 @@
   .queue-filter-actions button { flex:1; padding:6px 8px; font-size:12px; }
   .queue-scroll table { min-width:760px; }
   .queue-scroll thead th { position:sticky; top:0; z-index:1; background:#f7f9fb; box-shadow:0 1px 0 var(--line); }
+  /* 复用队列表头交互的滚动表格容器：渠道表/代理池表共用 */
+  .table-filter-card { position:relative; }
+  .table-filter-card > div[style*="overflow:auto"] { position:relative; max-height:420px; overflow:auto; border:1px solid rgb(148 163 184 / .2); border-radius:10px; }
+  .table-filter-card table { min-width:760px; }
+  .table-filter-card thead th { position:sticky; top:0; z-index:1; background:#f7f9fb; box-shadow:0 1px 0 var(--line); }
   @media (max-width:1100px) {
     .app { grid-template-columns:190px minmax(0,1fr); }
     #haozhu .cols-2 { grid-template-columns:minmax(0,1fr); }
@@ -376,17 +381,17 @@
         <p id="hz-project-status" role="status" aria-live="polite">输入项目关键词后点击搜索；查询使用豪猪 H5 会话。</p>
         <div id="hz-projects" style="margin-top:12px;"></div>
       </div>
-      <div class="card" id="hz-channels">
+          <div class="card table-filter-card" id="hz-channels">
       <h2>对接码渠道</h2>
       <p style="color:var(--muted)">先查询价格与库存，按需加入豪猪账户，再勾选保存到本地轮换池。取号使用数字项目 ID；查询标识只用于搜索渠道。保存本地配置后仍需启动注册任务。</p>
       <div class="row" style="flex-wrap:wrap;align-items:center;gap:16px;">
-        <label>排序 <select id="hz-channel-sort"><option value="price">价格：低 → 高</option><option value="price-desc">价格：高 → 低</option><option value="stock">库存：多 → 少</option><option value="stock-asc">库存：少 → 多</option><option value="default">默认（置顶 / 库存）</option></select></label>
         <label><input id="hz-normal-only" type="checkbox" style="width:auto;"> 只看正常号</label>
       </div>
       <p style="color:var(--muted)">正常号以平台号段类型为准；混合、虚拟及未知类型不计入。未知价格与库存排在末尾，库存 0 表示暂无可用号。</p>
       <p id="hz-channel-status" role="status"></p>
       <p id="hz-channel-summary" role="status" aria-live="polite"></p>
-      <div style="overflow:auto"><table><thead><tr><th>选择</th><th>UID / 项目</th><th>单价（元）</th><th>库存</th><th>号段类型 / 号段</th><th>运营商 / 省份</th><th>状态</th><th>操作</th></tr></thead><tbody id="hz-channel-body"></tbody></table></div>
+      <div style="overflow:auto"><table><thead><tr><th>选择</th><th><button class="queue-head" data-hzc-sort="uid">UID / 项目 <span>↕</span></button><button class="queue-head" data-hzc-filter="uid" aria-label="筛选 UID">▾</button></th><th><button class="queue-head" data-hzc-sort="price">单价（元） <span>↕</span></button><button class="queue-head" data-hzc-filter="price" aria-label="筛选单价">▾</button></th><th><button class="queue-head" data-hzc-sort="stock">库存 <span>↕</span></button><button class="queue-head" data-hzc-filter="stock" aria-label="筛选库存">▾</button></th><th><button class="queue-head" data-hzc-sort="segment">号段类型 / 号段 <span>↕</span></button><button class="queue-head" data-hzc-filter="segment" aria-label="筛选号段">▾</button></th><th><button class="queue-head" data-hzc-sort="isp">运营商 / 省份 <span>↕</span></button><button class="queue-head" data-hzc-filter="isp" aria-label="筛选运营商">▾</button></th><th><button class="queue-head" data-hzc-sort="state">状态 <span>↕</span></button><button class="queue-head" data-hzc-filter="state" aria-label="筛选状态">▾</button></th><th>操作</th></tr></thead><tbody id="hz-channel-body"></tbody></table></div>
+      <div id="hz-channel-filter-menu" class="queue-filter-menu" hidden></div>
       <div class="row" style="margin-top:12px;flex-wrap:wrap;">
         <button id="btn-hz-select">保存所选到本地渠道池</button>
         <button id="btn-hz-clear" class="secondary">清空本地渠道池</button>
@@ -470,16 +475,17 @@
       <textarea id="proxy-bulk" placeholder="ip:port:user:pass 每行一条"></textarea>
       <button id="btn-proxy-import" style="margin-top:10px;">导入</button>
     </div>
-    <div class="card" style="margin-top:16px;">
+        <div class="card table-filter-card" style="margin-top:16px;">
       <h2>列表</h2>
       <div class="row" style="margin-bottom:12px;">
         <button id="btn-proxy-check" class="secondary">健康检查</button>
         <button id="btn-proxy-export" class="secondary">导出</button>
       </div>
-      <table>
-        <thead><tr><th>#</th><th>代理</th><th>状态</th><th>冷却</th><th>成功/失败</th><th>累计使用</th><th></th></tr></thead>
+      <div style="overflow:auto"><table>
+        <thead><tr><th><button class="queue-head" data-pp-sort="idx"># <span>↕</span></button></th><th><button class="queue-head" data-pp-sort="host">代理 <span>↕</span></button><button class="queue-head" data-pp-filter="host" aria-label="筛选代理">▾</button></th><th><button class="queue-head" data-pp-sort="state">状态 <span>↕</span></button><button class="queue-head" data-pp-filter="state" aria-label="筛选状态">▾</button></th><th><button class="queue-head" data-pp-sort="cool">冷却 <span>↕</span></button><button class="queue-head" data-pp-filter="cool" aria-label="筛选冷却">▾</button></th><th><button class="queue-head" data-pp-sort="successes">成功/失败 <span>↕</span></button></th><th><button class="queue-head" data-pp-sort="uses">累计使用 <span>↕</span></button></th><th></th></tr></thead>
         <tbody id="proxy-body"><tr><td colspan="7" style="color:var(--muted)">空</td></tr></tbody>
-      </table>
+      </table></div>
+      <div id="proxy-filter-menu" class="queue-filter-menu" hidden></div>
     </div>
   </section>
 
@@ -1018,27 +1024,54 @@ $('btn-hz-search').onclick = searchHzProjects;
 $('hz-proj-key').addEventListener('keydown', event => {
   if (event.key === 'Enter' && !event.isComposing) { event.preventDefault(); searchHzProjects(); }
 });
-function hzChannelView(normalOnly = $('hz-normal-only').checked) {
-  const order = $('hz-channel-sort').value;
-  const rows = hzChannels.map((c, i) => ({c, i})).filter(({c}) => !normalOnly || ['正常号段','正常号','正常'].includes((c.segment_type || '').trim()));
-  if (order === 'default') return rows;
-  const field = order.startsWith('price') ? 'price' : 'stock';
-  const direction = ['price-desc','stock'].includes(order) ? -1 : 1;
-  const known = v => typeof v === 'number' && Number.isFinite(v) && v >= 0;
-  rows.sort((a, b) => {
-    const x = a.c[field], y = b.c[field];
-    if (known(x) !== known(y)) return known(x) ? -1 : 1;
-    if (known(x) && x !== y) return direction * (x - y);
-    const stock = c => known(c.stock) ? c.stock : -1;
-    const price = c => known(c.price) ? c.price : Infinity;
-    return stock(b.c) - stock(a.c) || price(a.c) - price(b.c) || a.c.uid.localeCompare(b.c.uid);
+const hzChannelTable = bindTableSortFilter(
+  'hzc', 'hz-channel-filter-menu', '#hz-channels',
+  ['uid', 'price', 'stock', 'segment', 'isp', 'state'],
+  {uid: {}, price: {}, stock: {}, segment: {}, isp: {}, state: {}},
+  (row, key) => {
+    const c = row.c;
+    if (key === 'price') return c.price == null ? '未知' : String(c.price);
+    if (key === 'stock') return c.stock == null || c.stock < 0 ? '未知' : String(c.stock);
+    if (key === 'segment') return c.segment_type || '未知号段';
+    if (key === 'isp') return (c.isps || []).join('/') || '不限';
+    if (key === 'state') return c.state || (c.pinned ? '市场置顶' : '市场渠道');
+    return String(c[key] ?? '—');
+  },
+  () => renderHzChannels(),
+  {
+    uid: (a, b) => String(a.c.uid || '').localeCompare(String(b.c.uid || ''), 'zh-CN', {numeric:true}),
+    price: (a, b) => (a.c.price ?? Infinity) - (b.c.price ?? Infinity),
+    stock: (a, b) => (a.c.stock ?? -1) - (b.c.stock ?? -1),
+    segment: (a, b) => hzChannelField(a, 'segment').localeCompare(hzChannelField(b, 'segment'), 'zh-CN'),
+    isp: (a, b) => hzChannelField(a, 'isp').localeCompare(hzChannelField(b, 'isp'), 'zh-CN'),
+    state: (a, b) => hzChannelField(a, 'state').localeCompare(hzChannelField(b, 'state'), 'zh-CN')
   });
-  return rows;
+function hzChannelField(row, key) {
+  const c = row.c;
+  if (key === 'price') return c.price == null ? '未知' : String(c.price);
+  if (key === 'stock') return c.stock == null || c.stock < 0 ? '未知' : String(c.stock);
+  if (key === 'segment') return c.segment_type || '未知号段';
+  if (key === 'isp') return (c.isps || []).join('/') || '不限';
+  if (key === 'state') return c.state || (c.pinned ? '市场置顶' : '市场渠道');
+  return String(c[key] ?? '—');
+}
+function hzChannelView(normalOnly = $('hz-normal-only').checked) {
+  const base = hzChannels.map((c, i) => ({c, i})).filter(({c}) => !normalOnly || ['正常号段','正常号','正常'].includes((c.segment_type || '').trim()));
+  const sorted = hzChannelTable.apply(base);
+  // 未点表头时保持默认顺序: 置顶优先 → 库存降序 → 价格升序
+  if (!hzChannelTable.sortState().key) {
+    const stock = c => typeof c.stock === 'number' && Number.isFinite(c.stock) && c.stock >= 0 ? c.stock : -1;
+    const price = c => typeof c.price === 'number' && Number.isFinite(c.price) && c.price >= 0 ? c.price : Infinity;
+    sorted.sort((a, b) => (b.c.pinned ? 1 : 0) - (a.c.pinned ? 1 : 0) || stock(b.c) - stock(a.c) || price(a.c) - price(b.c) || a.c.uid.localeCompare(b.c.uid));
+  }
+  return sorted;
 }
 function updateHzChannelSummary(rows = hzChannelView()) {
   const visible = new Set(rows.map(({c}) => c.uid));
   const hidden = [...hzChosenChannels].filter(uid => !visible.has(uid)).length;
-  $('hz-channel-summary').textContent = `显示 ${rows.length} / ${hzChannels.length} 个渠道 · 已选 ${hzChosenChannels.size} 个` + (hidden ? `（其中 ${hidden} 个被筛选隐藏，仍会保存）` : '');
+  const filters = hzChannelTable.activeFilterCount();
+  $('hz-channel-summary').textContent = `显示 ${rows.length} / ${hzChannels.length} 个渠道 · 已选 ${hzChosenChannels.size} 个` +
+    (hidden ? `（其中 ${hidden} 个被筛选隐藏，仍会保存）` : '') + (filters ? ` · 表头筛选 ${filters} 项` : '');
 }
 function renderHzChannels() {
   const rows = hzChannelView();
@@ -1063,7 +1096,6 @@ function renderHzChannels() {
     } catch(e) { button.disabled = false; toast(e.message); }
   });
 }
-$('hz-channel-sort').onchange = renderHzChannels;
 $('hz-normal-only').onchange = renderHzChannels;
 async function loadHzChannels(mine) {
   const request = ++hzChannelRequest;
@@ -1111,26 +1143,137 @@ async function loadAccounts() {
 $('btn-acc-import-gw').onclick = async () => { try { const r = await api('/credentials/import-gateway', {method:'POST'}); toast(r.imported + ' 个凭证已导入网关'); loadAccounts(); } catch (e) { toast(e.message); } };
 $('btn-acc-export').onclick = () => { window.open(API + '/credentials/export'); };
 
+/* ── 通用表头排序/筛选（渠道表 + 代理池表，交互与注册队列一致） ── */
+function bindTableSortFilter(prefix, menuId, cardSelector, sortKeys, filterKeys, fieldFn, render, sorters) {
+  let sortKey = '', sortDirection = -1;
+  let currentRows = [];  // 渲染回调前由数据持有方更新，筛选菜单从这里取值列表
+  const filters = {};
+  Object.keys(filterKeys).forEach(key => filters[key] = null);
+  const menu = () => $(menuId);
+  function position(button) {
+    const box = document.querySelector(cardSelector).getBoundingClientRect();
+    const anchor = button.getBoundingClientRect();
+    const m = menu();
+    const left = Math.max(8, Math.min(anchor.left - box.left, box.width - m.offsetWidth - 8));
+    const below = anchor.bottom - box.top + 4;
+    const fits = anchor.top - box.top - m.offsetHeight - 4;
+    m.style.left = `${left}px`;
+    m.style.top = `${below + m.offsetHeight > box.height && fits > 0 ? fits : below}px`;
+  }
+  let anchorButton = null;
+  window.addEventListener('scroll', () => { if (!menu().hidden && anchorButton) position(anchorButton); }, {passive:true});
+  window.addEventListener('resize', () => { menu().hidden = true; anchorButton = null; });
+  function open(key, button) {
+    const m = menu();
+    if (!m.hidden && m.dataset.key === key) { m.hidden = true; anchorButton = null; return; }
+    m.dataset.key = key;
+    const values = [...new Set(currentRows.map(row => fieldFn(row, key)))].sort((a,b) => a.localeCompare(b,'zh-CN',{numeric:true}));
+    const chosen = filters[key];
+    m.innerHTML = `<div class="queue-filter-actions"><button class="secondary" data-filter-all>全选</button><button class="secondary" data-filter-none>清空</button></div>` +
+      values.map(value => `<label><input type="checkbox" data-filter-value="${esc(value)}" ${!chosen || chosen.has(value) ? 'checked' : ''}>${esc(value)}</label>`).join('');
+    m.hidden = false;
+    anchorButton = button;
+    position(button);
+    const update = () => {
+      const selected = new Set([...m.querySelectorAll('[data-filter-value]:checked')].map(input => input.dataset.filterValue));
+      const total = m.querySelectorAll('[data-filter-value]').length;
+      filters[key] = selected.size === total ? null : selected;
+      button.classList.toggle('filter-active', filters[key] !== null);
+      render();
+    };
+    m.querySelectorAll('[data-filter-value]').forEach(input => input.onchange = update);
+    m.querySelector('[data-filter-all]').onclick = () => { m.querySelectorAll('[data-filter-value]').forEach(input => input.checked = true); update(); };
+    m.querySelector('[data-filter-none]').onclick = () => { m.querySelectorAll('[data-filter-value]').forEach(input => input.checked = false); update(); };
+  }
+  document.querySelectorAll(`[data-${prefix}-sort]`).forEach(button => button.onclick = () => {
+    const key = button.getAttribute(`data-${prefix}-sort`);
+    if (!sortKeys.includes(key)) return;
+    sortDirection = sortKey === key ? -sortDirection : 1;
+    sortKey = key;
+    document.querySelectorAll(`[data-${prefix}-sort] span`).forEach(span => span.textContent = '↕');
+    button.querySelector('span').textContent = sortDirection === 1 ? '↑' : '↓';
+    render();
+  });
+  document.querySelectorAll(`[data-${prefix}-filter]`).forEach(button => button.onclick = event => {
+    event.stopPropagation();
+    open(button.getAttribute(`data-${prefix}-filter`), button);
+  });
+  document.addEventListener('click', event => {
+    if (!event.target.closest(`#${menuId}`) && !event.target.closest(`[data-${prefix}-filter]`)) {
+      menu().hidden = true; anchorButton = null;
+    }
+  });
+  return {
+    apply(rows) {
+      currentRows = rows;
+      const filtered = rows.filter(row => {
+        for (const key of Object.keys(filterKeys)) {
+          const chosen = filters[key];
+          if (chosen && !chosen.has(fieldFn(row, key))) return false;
+        }
+        return true;
+      });
+      if (!sortKey) return filtered;
+      const cmp = sorters[sortKey] || ((a, b) => fieldFn(a, sortKey).localeCompare(fieldFn(b, sortKey), 'zh-CN', {numeric:true}));
+      return filtered.sort((a, b) => cmp(a, b) * sortDirection);
+    },
+    activeFilterCount() { return Object.values(filters).filter(v => v).length; },
+    sortState: () => ({key: sortKey, direction: sortDirection})
+  };
+}
+
 /* ── 代理池 ── */
+let proxyPoolItems = [];
+const proxyPoolTable = bindTableSortFilter(
+  'pp', 'proxy-filter-menu', '#proxy-page .table-filter-card',
+  ['idx', 'host', 'state', 'cool', 'successes', 'uses'],
+  {host: {}, state: {}, cool: {}},
+  (item, key) => {
+    if (key === 'state') return item.busy ? '占用' : item.healthy === false ? '失败' : item.healthy ? '健康' : '未测';
+    if (key === 'cool') return item.cooling ? '冷却中' : '可用';
+    return String(item[key] ?? '—');
+  },
+  () => renderProxyRows(),
+  {
+    idx: (a, b) => a.idx - b.idx,
+    host: (a, b) => String(a.host || '').localeCompare(String(b.host || ''), 'zh-CN', {numeric:true}),
+    state: (a, b) => proxyTableField(a, 'state').localeCompare(proxyTableField(b, 'state'), 'zh-CN'),
+    cool: (a, b) => (a.ready_in_sec || 0) - (b.ready_in_sec || 0),
+    successes: (a, b) => (a.successes || 0) - (b.successes || 0),
+    uses: (a, b) => (a.uses || 0) - (b.uses || 0)
+  });
+function proxyTableField(item, key) {
+  if (key === 'state') return item.busy ? '占用' : item.healthy === false ? '失败' : item.healthy ? '健康' : '未测';
+  if (key === 'cool') return item.cooling ? '冷却中' : '可用';
+  return String(item[key] ?? '—');
+}
+function renderProxyRows() {
+  const rows = proxyPoolTable.apply(proxyPoolItems);
+  $('proxy-body').innerHTML = rows.length ? rows.map(x => `<tr>
+    <td>${x.idx}</td><td>${esc(x.host || '—')}</td>
+    <td>${x.busy ? '<span class="tag run">占用</span>'
+      : x.healthy === false ? '<span class="tag bad" title="' + esc(x.last_error || '') + '">失败</span>'
+      : x.healthy ? '<span class="tag ok">健康</span>' : '<span class="tag">未测</span>'}</td>
+    <td>${x.cooling ? Math.ceil(x.ready_in_sec / 60) + ' 分钟' : '—'}</td>
+    <td>${x.successes || 0} / ${x.failures || 0}</td>
+    <td>${x.uses || 0}</td>
+    <td><button class="danger" data-prm="${x.idx}" style="padding:2px 8px;font-size:12px;">删</button></td></tr>`).join('') : '<tr><td colspan="7" style="color:var(--muted)">无匹配代理</td></tr>';
+  bindProxyRowActions();
+}
+function bindProxyRowActions() {
+  $('proxy-body').querySelectorAll('[data-prm]').forEach(b => b.onclick = async () => {
+    try { await api('/proxies/remove', {method:'POST', body: JSON.stringify({idx:+b.dataset.prm})});
+      loadProxy(); } catch (e) { toast(e.message); }
+  });
+}
 async function loadProxy() {
   try {
     const p = await api('/proxies');
+    proxyPoolItems = p.items || [];
     metric($('proxy-metrics'), [
       ['总数', p.total], ['可用', p.available, 'ok'],
       ['冷却中', p.cooling], ['占用中', p.busy]]);
-    $('proxy-body').innerHTML = p.items.length ? p.items.map(x => `<tr>
-      <td>${x.idx}</td><td>${esc(x.host || '—')}</td>
-      <td>${x.busy ? '<span class="tag run">占用</span>'
-        : x.healthy === false ? '<span class="tag bad" title="' + esc(x.last_error || '') + '">失败</span>'
-        : x.healthy ? '<span class="tag ok">健康</span>' : '<span class="tag">未测</span>'}</td>
-      <td>${x.cooling ? Math.ceil(x.ready_in_sec / 60) + ' 分钟' : '—'}</td>
-      <td>${x.successes || 0} / ${x.failures || 0}</td>
-      <td>${x.uses || 0}</td>
-      <td><button class="danger" data-prm="${x.idx}" style="padding:2px 8px;font-size:12px;">删</button></td></tr>`).join('') : '<tr><td colspan="7" style="color:var(--muted)">空</td></tr>';
-    $('proxy-body').querySelectorAll('[data-prm]').forEach(b => b.onclick = async () => {
-      try { await api('/proxies/remove', {method:'POST', body: JSON.stringify({idx:+b.dataset.prm})});
-        loadProxy(); } catch (e) { toast(e.message); }
-    });
+    renderProxyRows();
   } catch (e) {}
 }
 $('btn-proxy-import').onclick = async () => {
