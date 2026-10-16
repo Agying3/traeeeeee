@@ -196,7 +196,10 @@
   #haozhu label { display:block; min-width:0; color:#475569; font-size:13px; font-weight:500; }
   #haozhu label > input:not([type=checkbox]), #haozhu label > textarea,
   #haozhu label > select { margin-top:6px; }
-  #haozhu input, #haozhu select, #haozhu textarea { border-radius:9px; background:#fbfcfd; }
+  /* 用 background-color 而非 background 简写，避免清掉 select 的自绘箭头背景图 */
+  #haozhu input, #haozhu textarea { border-radius:9px; background-color:#fbfcfd; }
+  #haozhu select { border-radius:9px; }
+  #haozhu select:not([multiple]) { background-color:#fbfcfd; }
   #haozhu input[type=checkbox] { accent-color:var(--accent); }
   #haozhu button { border-radius:9px; box-shadow:none; padding:9px 14px; }
   #haozhu button.secondary { background:#fff; border-color:#dce2e9; }
@@ -231,6 +234,23 @@
   .queue-filter-menu input[type=text] { margin-bottom:6px; }
   .queue-filter-actions { display:flex; gap:6px; margin-top:6px; }
   .queue-filter-actions button { flex:1; padding:6px 8px; font-size:12px; }
+  /* 可点击列表项（项目搜索结果等） */
+  .pick-list { display:grid; gap:8px; }
+  .pick-item { display:flex; align-items:center; gap:10px; padding:10px 12px; border:1px solid var(--line);
+    border-radius:10px; background:#fff; box-shadow:0 6px 14px rgb(15 23 42 / .04); }
+  .pick-item:hover { border-color:rgb(194 65 12 / .22); background:#fffdfa; }
+  .pick-item .pick-main { flex:1 1 auto; min-width:0; color:#475569; font-size:13px; }
+  .pick-item .pick-main b { color:#1f2937; margin-right:6px; }
+  .pick-item button { flex:0 0 auto; }
+  /* 折叠控件统一外观 */
+  details > summary { cursor:pointer; list-style:none; display:flex; align-items:center; gap:7px;
+    padding:8px 12px; border:1px solid var(--line); border-radius:10px; background:#fff;
+    color:#475569; font-size:13px; font-weight:500; user-select:none; }
+  details > summary::-webkit-details-marker { display:none; }
+  details > summary::before { content:'▸'; color:var(--luoyv-brand-strong); font-size:12px;
+    transition:transform .18s ease-out; }
+  details[open] > summary::before { transform:rotate(90deg); }
+  details > summary:hover { border-color:rgb(194 65 12 / .2); color:var(--luoyv-brand-strong); }
   .queue-scroll table { min-width:760px; }
   .queue-scroll thead th { position:sticky; top:0; z-index:1; background:#f7f9fb; box-shadow:0 1px 0 var(--line); }
   /* 复用队列表头交互的滚动表格容器：渠道表/代理池表共用 */
@@ -1069,9 +1089,9 @@ async function searchHzProjects() {
     if (request !== hzSearchRequest) return;
     const items = r.items || [];
     status.textContent = items.length ? `找到 ${items.length} 个项目` : '暂无匹配项目，请更换关键词';
-    $('hz-projects').innerHTML = items.map((p, i) =>
-      `<div style="padding:6px 0;"><b>${esc(p.project_id || '数字 ID 待确认')}</b> ${esc(p.name)} ` +
-      `<button class="secondary" data-project="${i}">选择项目并查渠道</button></div>`).join('');
+    $('hz-projects').innerHTML = `<div class="pick-list">` + items.map((p, i) =>
+      `<div class="pick-item"><span class="pick-main"><b>${esc(p.project_id || '数字 ID 待确认')}</b>${esc(p.name)}</span>` +
+      `<button class="secondary" data-project="${i}">选择项目并查渠道</button></div>`).join('') + `</div>`;
     $('hz-projects').querySelectorAll('[data-project]').forEach(button => button.onclick = async () => {
       const p = items[+button.dataset.project];
       $('hz-catalog-sid').value = p.sid;
