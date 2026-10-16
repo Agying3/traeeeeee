@@ -203,7 +203,9 @@
   #haozhu tbody tr:hover { background:#fafbfc; }
   #hz-session-state { padding:12px 14px; border-radius:9px; background:#f4f7fa; line-height:1.75; }
   #hz-session-feedback:empty, #hz-channel-summary:empty { display:none; }
-  #hz-channel-summary { font-weight:500; color:#475569; }
+  .queue-scroll { max-height:320px; overflow:auto; border:1px solid rgb(148 163 184 / .2); border-radius:10px; }
+  .queue-scroll table { min-width:760px; }
+  .queue-scroll thead th { position:sticky; top:0; z-index:1; background:#f7f9fb; box-shadow:0 1px 0 var(--line); }
   @media (max-width:1100px) {
     .app { grid-template-columns:190px minmax(0,1fr); }
     #haozhu .cols-2 { grid-template-columns:minmax(0,1fr); }
@@ -315,10 +317,10 @@
         <button id="btn-retry-failed" class="secondary">一键重试失败</button>
       </div>
       <p style="color:var(--muted);margin:10px 0 0;">注册使用独立注册代理；浏览器仅用于滑块，注册和凭证获取走 HTTP。每号独立指纹与 IP。</p>
-      <h3>注册队列</h3>
+      <h3>注册队列</h3><label style="max-width:220px;margin:0 0 12px;">排序<select id="queue-sort"><option value="added-desc">最新加入</option><option value="added-asc">最早加入</option><option value="status">按状态</option><option value="proxy">按代理</option><option value="phone">按手机号</option></select></label>
       <div class="row" style="margin-bottom:12px;"><span id="hz-engine-state" style="color:var(--muted)"></span></div>
-      <table><thead><tr><th>手机号</th><th>代理</th><th>阶段</th><th>状态</th><th>凭证</th><th>操作</th></tr></thead>
-        <tbody id="queue-body"><tr><td colspan="6" style="color:var(--muted)">空</td></tr></tbody></table>
+      <div class="queue-scroll"><table><thead><tr><th>手机号</th><th>代理</th><th>阶段</th><th>状态</th><th>凭证</th><th>操作</th></tr></thead>
+        <tbody id="queue-body"><tr><td colspan="6" style="color:var(--muted)">空</td></tr></tbody></table></div>
     </div>
     <div class="grid hz-workspace">
       <div class="card" id="hz-auth">
@@ -637,7 +639,19 @@ async function loadWork() {
     } catch { $('upstream-state').textContent = '号池状态读取失败'; }
     const tb = $('queue-body');
     if (!tb) return;
-    tb.innerHTML = q.length ? q.map((t, i) => {
+    const mode = $('queue-sort')?.value || 'added-desc';
+    const statusRank = {running:0, waiting_code:1, fail:2, reconciliation_unknown:3, pending:4, ok:5};
+    const rows = q.map((task, index) => ({task, index}));
+    rows.sort((a, b) => {
+      let result = 0;
+      if (mode === 'added-desc') result = (b.task.added || 0) - (a.task.added || 0);
+      else if (mode === 'added-asc') result = (a.task.added || 0) - (b.task.added || 0);
+      else if (mode === 'status') result = (statusRank[a.task.status] ?? 9) - (statusRank[b.task.status] ?? 9);
+      else if (mode === 'proxy') result = (Number(a.task.proxy) || 0) - (Number(b.task.proxy) || 0);
+      else if (mode === 'phone') result = String(a.task.phone || '').localeCompare(String(b.task.phone || ''));
+      return result || a.index - b.index;
+    });
+    tb.innerHTML = rows.length ? rows.map(({task:t, index:i}) => {
       const acts = [];
       if (t.status === 'waiting_code')
         acts.push(`<input class="code" data-i="${i}" placeholder="输码">` +
@@ -668,6 +682,10 @@ async function loadWork() {
     });
   } catch (e) { metric($('work-metrics'), [['引擎', '未启动', 'err']]); }
 }
+const queueSort = $('queue-sort');
+const savedQueueSort = localStorage.getItem('trae-queue-sort');
+if ([...queueSort.options].some(option => option.value === savedQueueSort)) queueSort.value = savedQueueSort;
+queueSort.onchange = () => { localStorage.setItem('trae-queue-sort', queueSort.value); loadWork(); };
 $('btn-upstream-key').onclick = async () => {
   try { await api('/upstream/key', {method:'POST', body:JSON.stringify({api_key:$('upstream-key').value.trim()})}); $('upstream-key').value = ''; $('upstream-key-state').textContent = '上游 Key 已保存；NewAPI 地址为当前服务 /v1'; toast('上游 Key 已保存'); }
   catch (e) { toast(e.message); }
