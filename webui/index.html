@@ -172,9 +172,18 @@
     box-shadow:0 4px 20px rgb(15 23 42 / .035); }
   #haozhu .card h2 { font-size:17px; margin-bottom:18px; }
   #haozhu .card h3 { font-size:14px; margin:24px 0 10px; }
+  #haozhu .hz-col > .card { margin-top:0; }
+  #haozhu .hz-workspace > .card { align-self:stretch; }
+  .hz-auth-fields textarea#hz-uids { min-height:104px; }
   #haozhu .card p { font-size:13px; line-height:1.7; }
   #haozhu .grid { gap:20px; align-items:start; }
-  #haozhu .hz-workspace { grid-template-columns:minmax(340px,.85fr) minmax(0,1.6fr); align-items:start; }
+  #haozhu .hz-workspace { grid-template-columns:minmax(0,1.05fr) minmax(0,1.15fr); align-items:start; }
+  .hz-col { display:grid; gap:20px; align-content:start; min-width:0; }
+  .ct-fields { display:grid; grid-template-columns:repeat(auto-fit,minmax(112px,1fr)); gap:10px 12px; align-items:end; }
+  .ct-fields > label { margin:0; }
+  .ct-switch { grid-column:1/-1; display:flex; align-items:center; gap:6px; }
+  #haozhu .ct-fields > label > input { margin-top:4px; }
+  .ct-save { align-self:end; }
   .hz-auth-fields { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:14px 18px; align-items:start; }
   .hz-field-wide { grid-column:span 2; }
   .hz-field-full { grid-column:1/-1; margin:0; }
@@ -229,7 +238,7 @@
   .table-filter-card > div[style*="overflow:auto"] { position:relative; max-height:420px; overflow:auto; border:1px solid rgb(148 163 184 / .2); border-radius:10px; }
   .table-filter-card table { min-width:760px; }
   .table-filter-card thead th { position:sticky; top:0; z-index:1; background:#f7f9fb; box-shadow:0 1px 0 var(--line); }
-  @media (max-width:1500px) {
+  @media (max-width:1180px) {
     #haozhu .hz-workspace { grid-template-columns:minmax(0,1fr); }
   }
   @media (max-width:1100px) {
@@ -351,6 +360,7 @@
     <div class="grid hz-workspace">
       <div class="card" id="hz-auth">
         <h2>账户与接码配置</h2>
+
         <div class="hz-auth-fields">
           <label>豪猪账号<input id="hz-user" placeholder="账号"></label>
           <label>密码（留空保留）<input id="hz-pass" type="password" autocomplete="new-password" placeholder="豪猪 API 密码"></label>
@@ -372,6 +382,7 @@
         </div>
         <button id="btn-hz-save" style="margin-top:16px;">保存配置</button>
       </div>
+      <div class="hz-col" id="hz-query-col">
       <div class="card" id="hz-query">
         <h2>搜索项目</h2>
         <div class="hz-query-fields">
@@ -383,6 +394,25 @@
         </div>
         <p id="hz-project-status" role="status" aria-live="polite">输入项目关键词后点击搜索；查询使用豪猪 H5 会话。</p>
         <div id="hz-projects" style="margin-top:12px;"></div>
+      </div>
+      <div class="card" id="ct-card">
+        <h2>连续加号（自动补号值班）</h2>
+        <p style="color:var(--muted);font-size:13px;margin:4px 0 10px;">
+          队列缺号自动补：豪猪取号入队 + 自动拉起引擎。触发线/每日上限/余额下限三道防线，暂停原因自动恢复。
+        </p>
+        <div class="ct-fields">
+          <label class="ct-switch">
+            <input type="checkbox" id="ct-enabled" style="width:auto;"> 启用值班
+          </label>
+          <label>缺号线<input id="ct-min-queue" type="number" min="1" value="3"></label>
+          <label>每轮加<input id="ct-batch" type="number" min="1" value="2"></label>
+          <label>今日上限<input id="ct-daily-max" type="number" min="1" value="20"></label>
+          <label>余额下限(¥)<input id="ct-min-balance" type="number" min="0" step="0.5" value="5"></label>
+          <button id="btn-ct-save" class="ct-save">保存</button>
+        </div>
+        <div id="ct-status" style="margin-top:12px;"></div>
+        <div id="ct-logs" style="margin-top:8px;max-height:180px;overflow:auto;font-size:12px;color:var(--muted);"></div>
+      </div>
       </div>
     </div>
     <div class="card table-filter-card" id="hz-channels" style="margin-top:20px;">
@@ -420,32 +450,6 @@
       <p style="color:var(--muted)">核对平台收码记录后填写依据；已存在平台收码证据的尝试会保留收码估算。</p>
       <div style="overflow:auto"><table><thead><tr><th><button class="queue-head" data-unres-sort="attempt">尝试 <span>↕</span></button></th><th><button class="queue-head" data-unres-sort="reserved">预留 <span>↕</span></button></th><th>核对结果</th><th>依据</th><th>操作</th></tr></thead><tbody id="unresolved-body"></tbody></table></div>
       <details style="margin-top:14px"><summary>审计事件（最近100条）</summary><div id="ledger-events" class="logs" style="margin-top:10px"></div></details>
-    </div>
-    <div class="card" style="margin-top:20px;">
-      <h2>连续加号（自动补号值班）</h2>
-      <p style="color:var(--muted);font-size:13px;margin:4px 0 10px;">
-        队列缺号自动补：豪猪取号入队 + 自动拉起引擎。触发线/每日上限/余额下限三道防线，暂停原因自动恢复。
-      </p>
-      <div class="row" style="align-items:center;flex-wrap:wrap;gap:10px;">
-        <label style="display:flex;align-items:center;gap:6px;margin:0;">
-          <input type="checkbox" id="ct-enabled" style="width:auto;"> 启用值班
-        </label>
-        <label style="margin:0;">缺号线
-          <input id="ct-min-queue" type="number" min="1" style="width:70px;" value="3">
-        </label>
-        <label style="margin:0;">每轮加
-          <input id="ct-batch" type="number" min="1" style="width:60px;" value="2">
-        </label>
-        <label style="margin:0;">今日上限
-          <input id="ct-daily-max" type="number" min="1" style="width:70px;" value="20">
-        </label>
-        <label style="margin:0;">余额下限(¥)
-          <input id="ct-min-balance" type="number" min="0" step="0.5" style="width:80px;" value="5">
-        </label>
-        <button id="btn-ct-save">保存</button>
-      </div>
-      <div id="ct-status" style="margin-top:12px;"></div>
-      <div id="ct-logs" style="margin-top:8px;max-height:180px;overflow:auto;font-size:12px;color:var(--muted);"></div>
     </div>
   </section>
 
