@@ -213,7 +213,8 @@
   .queue-head { display:inline-flex; align-items:center; gap:5px; padding:3px 6px; border:0; border-radius:7px; background:transparent; color:#687587; box-shadow:none; font-size:12px; }
   .queue-head:hover:not(:disabled) { background:#ffedd5; color:var(--luoyv-brand-strong); box-shadow:none; transform:none; }
   .queue-head span { color:var(--luoyv-brand-strong); font-size:13px; }
-  .queue-filter-menu { position:fixed; z-index:20; min-width:190px; max-width:260px; max-height:240px; overflow:auto; padding:10px; border:1px solid rgb(148 163 184 / .28); border-radius:10px; background:#fff; box-shadow:0 14px 30px rgb(15 23 42 / .14); }
+  #haozhu .hz-registration-card { position:relative; }
+  .queue-filter-menu { position:absolute; z-index:20; min-width:190px; max-width:260px; max-height:240px; overflow:auto; padding:10px; border:1px solid rgb(148 163 184 / .28); border-radius:10px; background:#fff; box-shadow:0 14px 30px rgb(15 23 42 / .14); }
   .queue-filter-menu[hidden] { display:none; }
   #haozhu .queue-filter-menu label { display:flex; align-items:center; gap:7px; padding:6px 4px; color:#475569; font-size:12px; }
   #haozhu .queue-filter-menu input[type=checkbox] { width:auto; accent-color:var(--accent); }
@@ -337,7 +338,8 @@
       <h3>注册队列</h3>
       <div class="row" style="margin-bottom:12px;"><span id="hz-engine-state" style="color:var(--muted)"></span><span id="queue-filter-summary" style="color:var(--muted);font-size:12px;"></span></div>
       <div class="queue-scroll"><table><thead><tr><th><button class="queue-head" data-queue-sort="phone">手机号 <span>↕</span></button><button class="queue-head" data-queue-filter="phone" aria-label="筛选手机号">▾</button></th><th><button class="queue-head" data-queue-sort="proxy">代理 <span>↕</span></button><button class="queue-head" data-queue-filter="proxy" aria-label="筛选代理">▾</button></th><th><button class="queue-head" data-queue-sort="stage">阶段 <span>↕</span></button><button class="queue-head" data-queue-filter="stage" aria-label="筛选阶段">▾</button></th><th><button class="queue-head" data-queue-sort="status">状态 <span>↕</span></button><button class="queue-head" data-queue-filter="status" aria-label="筛选状态">▾</button></th><th><button class="queue-head" data-queue-sort="credential">凭证 <span>↕</span></button><button class="queue-head" data-queue-filter="credential" aria-label="筛选凭证">▾</button></th><th>操作</th></tr></thead>
-        <tbody id="queue-body"><tr><td colspan="6" style="color:var(--muted)">空</td></tr></tbody></table><div id="queue-filter-menu" class="queue-filter-menu" hidden></div></div>
+        <tbody id="queue-body"><tr><td colspan="6" style="color:var(--muted)">空</td></tr></tbody></table></div>
+      <div id="queue-filter-menu" class="queue-filter-menu" hidden></div>
     </div>
     <div class="grid hz-workspace">
       <div class="card" id="hz-auth">
@@ -690,9 +692,24 @@ function bindQueueActions() {
     catch(error) { toast(error.message); }
   });
 }
+// {意图：菜单锚在表头上，页面或队列滚动时一起走，不脱离触发点。}
+function positionQueueFilter(button) {
+  const menu = $('queue-filter-menu'), host = menu.parentElement;
+  const anchor = button.getBoundingClientRect(), box = host.getBoundingClientRect();
+  const width = menu.offsetWidth, height = menu.offsetHeight;
+  const left = Math.max(8, Math.min(anchor.left - box.left, box.width - width - 8));
+  const below = anchor.bottom - box.top + 4;
+  const fits = anchor.top - box.top - height - 4;
+  menu.style.left = `${left}px`;
+  menu.style.top = `${below + height > box.height && fits > 0 ? fits : below}px`;
+}
+window.addEventListener('resize', () => { const menu = $('queue-filter-menu'); if (!menu.hidden) menu.hidden = true; });
+// {意图：滚动时重新贴回触发的表头，避免菜单停在旧坐标。}
+let queueFilterAnchor = null;
+window.addEventListener('scroll', () => { const menu = $('queue-filter-menu'); if (!menu.hidden && queueFilterAnchor) positionQueueFilter(queueFilterAnchor); }, {passive:true});
 function openQueueFilter(key, button) {
   const menu = $('queue-filter-menu');
-  if (!menu.hidden && menu.dataset.key === key) { menu.hidden = true; return; }
+  if (!menu.hidden && menu.dataset.key === key) { menu.hidden = true; queueFilterAnchor = null; return; }
   menu.dataset.key = key;
   if (key === 'phone') {
     menu.innerHTML = `<label>包含手机号<input type="text" data-phone-filter value="${esc(queueFilters.phone)}" placeholder="输入手机号片段"></label><div class="queue-filter-actions"><button class="secondary" data-filter-reset>清除</button></div>`;
@@ -703,9 +720,8 @@ function openQueueFilter(key, button) {
       values.map(value => `<label><input type="checkbox" data-filter-value="${esc(value)}" ${!chosen || chosen.has(value) ? 'checked' : ''}>${esc(value)}</label>`).join('');
   }
   menu.hidden = false;
-  const rect = button.getBoundingClientRect(), width = menu.offsetWidth, height = menu.offsetHeight;
-  menu.style.left = `${Math.max(8,Math.min(rect.left,innerWidth-width-8))}px`;
-  menu.style.top = `${Math.max(8,Math.min(rect.bottom+4,innerHeight-height-8))}px`;
+  queueFilterAnchor = button;
+  positionQueueFilter(button);
   const phone = menu.querySelector('[data-phone-filter]');
   if (phone) {
     phone.oninput = () => { queueFilters.phone = phone.value.trim(); renderQueueRows(); };
@@ -731,7 +747,7 @@ document.querySelectorAll('[data-queue-sort]').forEach(button => button.onclick 
   loadWork();
 });
 document.querySelectorAll('[data-queue-filter]').forEach(button => button.onclick = event => { event.stopPropagation(); openQueueFilter(button.dataset.queueFilter,button); });
-document.addEventListener('click', event => { if (!event.target.closest('#queue-filter-menu') && !event.target.closest('[data-queue-filter]')) $('queue-filter-menu').hidden = true; });
+document.addEventListener('click', event => { if (!event.target.closest('#queue-filter-menu') && !event.target.closest('[data-queue-filter]')) { $('queue-filter-menu').hidden = true; queueFilterAnchor = null; } });
 
 async function loadWork() {
   if (document.activeElement?.matches('#queue-body input') || !$('queue-filter-menu').hidden) return;
