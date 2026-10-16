@@ -258,52 +258,11 @@
     <p class="lead">注册队列：豪猪取号 → 养fp → 发码 → 滑块 → 收码 → 登录换证 → 凭证入库</p>
     <div class="metrics-row" id="work-metrics"></div>
     <div class="grid cols-2">
-      <div class="card">
-        <h2>添加注册任务</h2>
-        <div class="row">
-          <label>数量
-            <input id="reg-count" type="number" value="1" min="1" max="10">
-          </label>
-          <label>代理序号
-            <input id="reg-proxy" type="number" value="19" placeholder="19">
-          </label>
-          <button id="btn-reg-add">加入队列</button>
-        </div>
-        <p style="color:var(--muted);margin:10px 0 0;">
-          铁律：纯HTTP，浏览器仅滑块拖动；每号换指纹+换IP</p>
-        <h2 style="margin-top:18px;">批量入队</h2>
-        <div class="row">
-          <label>起始代理#
-            <input id="reg-batch-start" type="number" value="19" min="0">
-          </label>
-          <label>结束代理#
-            <input id="reg-batch-end" type="number" value="118" min="0">
-          </label>
-          <button id="btn-reg-batch">批量入队</button>
-        </div>
-        <p style="color:var(--muted);margin:10px 0 0;">
-          每个代理一条任务，一号一IP；一次最多500条</p>
+      <div class="card"><h2>号池与上游</h2><div id="upstream-state" style="color:var(--muted)">正在读取号池状态…</div>
+        <div class="row" style="margin-top:12px;"><input id="upstream-key" type="password" autocomplete="new-password" placeholder="设置中转站 API Key（至少16位）"><button id="btn-upstream-key" class="secondary">保存 Key</button></div>
+        <small id="upstream-key-state" style="color:var(--muted)"></small>
       </div>
-      <div class="card">
-        <h2>引擎</h2>
-        <div class="row">
-          <button id="btn-engine-start">启动</button>
-          <button id="btn-engine-stop" class="danger">停止</button>
-        </div>
-        <div id="engine-state" style="margin-top:10px;color:var(--muted);">未启动</div>
-      </div>
-    </div>
-    <div class="card" style="margin-top:16px;">
-      <h2>队列</h2>
-      <div class="row" style="margin-bottom:12px;">
-        <button id="btn-retry-failed" class="secondary">一键重试失败</button>
-      </div>
-      <table>
-        <thead><tr>
-          <th>手机号</th><th>代理</th><th>阶段</th><th>状态</th><th>凭证</th><th>操作</th>
-        </tr></thead>
-        <tbody id="queue-body"><tr><td colspan="6" style="color:var(--muted)">空</td></tr></tbody>
-      </table>
+      <div class="card"><h2>注册引擎</h2><div id="engine-state" style="color:var(--muted)">未启动</div></div>
     </div>
   </section>
 
@@ -338,6 +297,29 @@
     <h1>豪猪接码</h1>
     <p class="lead">取号与收码的账号配置（凭据只存本机 data/）</p>
     <div class="metrics-row" id="haozhu-metrics"></div>
+    <div class="card hz-registration-card">
+      <h2>注册任务</h2>
+      <div class="row">
+        <label>数量<input id="reg-count" type="number" value="1" min="1" max="10"></label>
+        <label>代理序号<input id="reg-proxy" type="number" value="19" placeholder="19"></label>
+        <button id="btn-reg-add">加入队列</button>
+      </div>
+      <div class="row" style="margin-top:12px;">
+        <label>起始代理#<input id="reg-batch-start" type="number" value="19" min="0"></label>
+        <label>结束代理#<input id="reg-batch-end" type="number" value="118" min="0"></label>
+        <button id="btn-reg-batch">批量入队</button>
+      </div>
+      <div class="row" style="margin-top:12px;">
+        <button id="btn-engine-start">启动注册引擎</button>
+        <button id="btn-engine-stop" class="danger">停止注册引擎</button>
+        <button id="btn-retry-failed" class="secondary">一键重试失败</button>
+      </div>
+      <p style="color:var(--muted);margin:10px 0 0;">注册使用独立注册代理；浏览器仅用于滑块，注册和凭证获取走 HTTP。每号独立指纹与 IP。</p>
+      <h3>注册队列</h3>
+      <div class="row" style="margin-bottom:12px;"><span id="hz-engine-state" style="color:var(--muted)"></span></div>
+      <table><thead><tr><th>手机号</th><th>代理</th><th>阶段</th><th>状态</th><th>凭证</th><th>操作</th></tr></thead>
+        <tbody id="queue-body"><tr><td colspan="6" style="color:var(--muted)">空</td></tr></tbody></table>
+    </div>
     <div class="grid hz-workspace">
       <div class="card" id="hz-auth">
         <h2>账户与接码配置</h2>
@@ -645,8 +627,16 @@ async function loadWork() {
       ['成功率', s.done + s.fail ? Math.round(100 * s.done / (s.done + s.fail)) + '%' : '—'],
       ['凭证', s.creds || 0, 'ok'],
     ]);
-    $('engine-state').textContent = (s.running ? '运行中' : '已停止') + ` · 本批成功 ${s.batch_ok || 0} / 尝试 ${s.batch_attempts || 0}` + (s.stop_reason ? ' · ' + s.stop_reason : '');
+    const engineText = (s.running ? '运行中' : '已停止') + ` · 本批成功 ${s.batch_ok || 0} / 尝试 ${s.batch_attempts || 0}` + (s.stop_reason ? ' · ' + s.stop_reason : '');
+    if ($('engine-state')) $('engine-state').textContent = engineText;
+    if ($('hz-engine-state')) $('hz-engine-state').textContent = engineText;
+    try {
+      const g = await api('/gateway/state');
+      const u = await api('/upstream/stats');
+      $('upstream-state').innerHTML = `${g.alive ? '<span class="tag ok">在线</span>' : '<span class="tag bad">离线</span>'} · 号池账号 ${g.accounts} · 可用模型 ${g.models}<br><small style="color:var(--muted)">OpenAI 上游：/v1 · 调用 ${u.requests}（成功 ${u.success} / 失败 ${u.failed}）</small>`;
+    } catch { $('upstream-state').textContent = '号池状态读取失败'; }
     const tb = $('queue-body');
+    if (!tb) return;
     tb.innerHTML = q.length ? q.map((t, i) => {
       const acts = [];
       if (t.status === 'waiting_code')
@@ -678,6 +668,10 @@ async function loadWork() {
     });
   } catch (e) { metric($('work-metrics'), [['引擎', '未启动', 'err']]); }
 }
+$('btn-upstream-key').onclick = async () => {
+  try { await api('/upstream/key', {method:'POST', body:JSON.stringify({api_key:$('upstream-key').value.trim()})}); $('upstream-key').value = ''; $('upstream-key-state').textContent = '上游 Key 已保存；NewAPI 地址为当前服务 /v1'; toast('上游 Key 已保存'); }
+  catch (e) { toast(e.message); }
+};
 $('btn-reg-add').onclick = async () => {
   try {
     await api('/queue', {method: 'POST', body: JSON.stringify({
@@ -713,6 +707,7 @@ for (const id of ['hz-user','hz-pass','hz-token','hz-session','hz-sid','hz-uid',
   $(id).addEventListener('input', () => { hzDraft = true; });
 }
 async function loadHaozhu() {
+  await loadWork();
   try {
     const c = await api('/haozhu/config');
     if (!hzDraft) {

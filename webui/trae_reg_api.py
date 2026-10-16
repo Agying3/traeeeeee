@@ -8,12 +8,13 @@ import re
 import uuid
 import subprocess
 import sys
+import threading
 import time
 import urllib.request
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse, PlainTextResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -27,6 +28,7 @@ TOOLS = PROGRAM_DIR / "tools"
 CRED_DIR = runtime.CRED_DIR if MANAGED else ROOT / "tmp" / "register-credentials"
 CONFIG = runtime.CONFIG_DIR / "webui.json" if MANAGED else Path(__file__).parent / "config.json"
 GW = os.environ.get("A2A_BASE_URL", "http://127.0.0.1:3065").rstrip("/")
+UPSTREAM_API_KEY = os.environ.get("TRAE_UPSTREAM_API_KEY", "").strip()
 SERVICE_STARTED = time.time()
 SERVICE_LOGGER = runtime.configure_logging() if MANAGED else None
 BACKGROUND_TASKS = []
@@ -61,18 +63,37 @@ def load_config() -> dict:
 QUEUE_FILE = runtime.STATE_DIR / "queue.json" if MANAGED else Path(__file__).parent / "queue.json"
 METRICS_FILE = runtime.STATE_DIR / "metrics.json" if MANAGED else Path(__file__).parent / "metrics.json"
 METRICS_MAX = 5000
+UPSTREAM_STATS_FILE = runtime.STATE_DIR / "upstream-stats.json"
+UPSTREAM_STATS_LOCK = threading.Lock()
+
+
+def upstream_stats() -> dict:
+    try:
+        return json.loads(UPSTREAM_STATS_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {"requests": 0, "success": 0, "failed": 0, "last_at": None, "last_model": ""}
+
+
+def record_upstream(ok: bool, model: str = ""):
+    with UPSTREAM_STATS_LOCK:
+        stats = upstream_stats()
+        stats["requests"] += 1
+        stats["success" if ok else "failed"] += 1
+        stats["last_at"] = time.time()
+        if model:
+            stats["last_model"] = str(model)[:120]
+        runtime.atomic_json(UPSTREAM_STATS_FILE, stats)
 
 
 def _atomic_write(path: Path, data):
     runtime.atomic_json(path, data)
 
-
 def queue_save():
     try:
         _atomic_write(QUEUE_FILE, {"queue": state["queue"],
                                   "done": state["done"], "fail": state["fail"],
-                                   "guard": {k: state.get(k) for k in ("stop_reason", "halted", "batch_id",
-                                             "batch_ok", "batch_attempts", "failure_streaks")}})
+                                  "guard": {k: state.get(k) for k in ("stop_reason", "halted", "batch_id",
+                                              "batch_ok", "batch_attempts", "failure_streaks")}})
     except Exception as error:
         state.update(halted=True, stop_reason="队列保存失败，暂停派发")
         log("队列保存失败: " + type(error).__name__)
@@ -905,7 +926,115 @@ async def gateway_start():
     return {"ok": r.returncode == 0, "out": out}
 
 
-# ── 设置/日志 ───────────────────────────────────────────
+@app.get("/v1/models")
+async def openai_models(request: Request):
+    _check_upstream_key(request)
+    return await asyncio.to_thread(_gw_json, "GET", "/v1/models")
+
+
+@app.post("/v1/chat/completions")
+async def openai_chat(request: Request):
+    _check_upstream_key(request)
+    body = await request.json()
+    if not isinstance(body, dict):
+        raise HTTPException(400, "请求体必须是 JSON 对象")
+    if body.get("stream") is True:
+        return StreamingResponse(_gw_stream("/v1/chat/completions", body), media_type="text/event-stream",
+                                 headers={"cache-control": "no-cache"})
+    return await _relay_json("/v1/chat/completions", body)
+
+
+async def _relay_json(path: str, body: dict):
+    try:
+        result = await asyncio.to_thread(_gw_json, "POST", path, body)
+        record_upstream(True, body.get("model", ""))
+        return JSONResponse(result)
+    except HTTPException:
+        record_upstream(False, body.get("model", ""))
+        raise
+
+
+
+@app.post("/v1/responses")
+async def openai_responses(request: Request):
+    _check_upstream_key(request)
+    body = await request.json()
+    if not isinstance(body, dict):
+        raise HTTPException(400, "请求体必须是 JSON 对象")
+    if body.get("stream") is True:
+        return StreamingResponse(_gw_stream("/v1/responses", body), media_type="text/event-stream",
+                                 headers={"cache-control": "no-cache"})
+    return await _relay_json("/v1/responses", body)
+
+
+def _check_upstream_key(request: Request):
+    expected = UPSTREAM_API_KEY or str(load_config().get("upstream_api_key", "")).strip()
+    if not expected:
+        raise HTTPException(503, "请先在工作台配置上游 API Key")
+    if request.headers.get("authorization", "") != "Bearer " + expected:
+        raise HTTPException(401, "上游 API Key 无效")
+
+
+def _gw_stream(path: str, body: dict):
+    data = json.dumps(body).encode()
+    req = urllib.request.Request(GW + path, data=data, method="POST",
+                                 headers={"content-type": "application/json"})
+    ok = False
+    try:
+        with urllib.request.urlopen(req, timeout=120) as response:
+            while chunk := response.read(16384):
+                yield chunk
+        ok = True
+    except urllib.error.HTTPError as error:
+        detail = error.read().decode("utf-8", "replace")
+        yield ("data: " + json.dumps({"error": {"message": detail[:1000]}}, ensure_ascii=False) + "\\n\\n").encode()
+    except OSError as error:
+        yield ("data: " + json.dumps({"error": {"message": "Agent2API 网关不可用: " + str(error)}}, ensure_ascii=False) + "\\n\\n").encode()
+    finally:
+        record_upstream(ok, body.get("model", ""))
+
+
+def _gw_json(method: str, path: str, body: dict | None = None):
+    data = json.dumps(body).encode() if body is not None else None
+    req = urllib.request.Request(GW + path, data=data, method=method,
+                                 headers={"content-type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=120) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as error:
+        detail = error.read().decode("utf-8", "replace")
+        raise HTTPException(error.code, detail[:1000])
+    except OSError as error:
+        raise HTTPException(503, "Agent2API 网关不可用: " + str(error))
+
+
+
+@app.get("/api/upstream/config")
+async def upstream_config():
+    return {"configured": bool(UPSTREAM_API_KEY or load_config().get("upstream_api_key")),
+            "managed_by_env": bool(UPSTREAM_API_KEY), "base_url": "http://127.0.0.1:8898/v1"}
+
+
+@app.get("/api/upstream/stats")
+async def get_upstream_stats():
+    return {"base_url": "http://127.0.0.1:8898/v1", **upstream_stats()}
+
+
+class UpstreamKey(BaseModel):
+    api_key: str = Field(min_length=16, max_length=256)
+
+
+@app.post("/api/upstream/key")
+async def set_upstream_key(req: UpstreamKey):
+    global UPSTREAM_API_KEY
+    cfg = load_config()
+    cfg["upstream_api_key"] = req.api_key
+    CONFIG.parent.mkdir(parents=True, exist_ok=True)
+    _atomic_write(CONFIG, cfg)
+    UPSTREAM_API_KEY = req.api_key
+    return {"ok": True, "configured": True}
+
+
 @app.get("/api/settings")
 async def settings_get():
     return load_config()

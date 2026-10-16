@@ -97,7 +97,7 @@ def serve(port: int, instance: str) -> int:
     logger = configure_logging()
     logger.info("service start pid=%s port=%s python=%s", os.getpid(), port, sys.executable)
     try:
-        server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port,
+        server = uvicorn.Server(uvicorn.Config(app, host=os.environ.get("TRAE_LISTEN_HOST", "127.0.0.1"), port=port,
                                 log_level="info", timeout_graceful_shutdown=12))
         app.state.shutdown = lambda: setattr(server, "should_exit", True)
         server.run()
