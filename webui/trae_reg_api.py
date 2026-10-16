@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import runtime
+from registration_proxy_pool import RegistrationProxyPool
 
 PROGRAM_DIR = Path(__file__).resolve().parents[1]
 MANAGED = bool(os.environ.get("TRAE_DATA_DIR"))
@@ -133,8 +134,14 @@ queue_load()
 
 
 class RegReq(BaseModel):
-    count: int = 1
-    proxy: int = 19
+    count: int = Field(1, ge=1, le=10)
+    proxy: int | None = Field(None, ge=0)
+
+
+class BatchReq(BaseModel):
+    count: int = Field(1, ge=1, le=500)
+    proxy_start: int | None = Field(None, ge=0)
+    proxy_end: int | None = Field(None, ge=0)
 
 
 @app.get("/api/engine/state")
@@ -150,31 +157,39 @@ async def engine_state():
 
 @app.post("/api/queue")
 async def queue_add(req: RegReq):
+    proxy_label = f"#{req.proxy}" if req.proxy is not None else "自动选择"
     for _ in range(max(1, min(req.count, 10))):
-        state["queue"].append({"phone": "", "proxy": req.proxy, "stage": "pending",
-                                "status": "pending", "cred": False, "added": time.time()})
-    log(f"队列 +{req.count} (代理#{req.proxy})")
+        task = {"phone": "", "proxy": req.proxy,
+                "proxy_mode": "fixed" if req.proxy is not None else "auto",
+                "stage": "pending", "status": "pending", "cred": False, "added": time.time()}
+        state["queue"].append(task)
+    log(f"队列 +{req.count}（代理{proxy_label}）")
     queue_save()
     return {"queued": req.count, "total": len(state["queue"])}
 
 
-class BatchReq(BaseModel):
-    proxy_start: int = 19
-    proxy_end: int = 19
-
-
 @app.post("/api/queue/batch")
 async def queue_batch(req: BatchReq):
-    """一键批量入队: 代理 #start..#end 每号一条任务(等价于逐个点加入队列)。"""
-    if req.proxy_start < 0 or req.proxy_end < req.proxy_start:
-        raise HTTPException(400, "代理范围无效")
-    count = req.proxy_end - req.proxy_start + 1
-    if count > 500:
-        raise HTTPException(400, "单次最多批量 500 条")
-    for p in range(req.proxy_start, req.proxy_end + 1):
-        state["queue"].append({"phone": "", "proxy": p, "stage": "pending",
-                                "status": "pending", "cred": False, "added": time.time()})
-    log(f"批量入队 +{count} (代理#{req.proxy_start}~#{req.proxy_end})")
+    """批量入队；未指定代理范围时由引擎派发阶段自动选号。"""
+    if req.proxy_start is not None or req.proxy_end is not None:
+        if req.proxy_start is None or req.proxy_end is None or req.proxy_end < req.proxy_start:
+            raise HTTPException(400, "代理范围无效")
+        count = req.proxy_end - req.proxy_start + 1
+        if count > 500:
+            raise HTTPException(400, "单次最多批量 500 条")
+        for proxy in range(req.proxy_start, req.proxy_end + 1):
+            state["queue"].append({"phone": "", "proxy": proxy, "proxy_mode": "fixed",
+                                   "stage": "pending", "status": "pending", "cred": False,
+                                   "added": time.time()})
+        label = f"代理#{req.proxy_start}~#{req.proxy_end}"
+    else:
+        count = req.count
+        for _ in range(count):
+            state["queue"].append({"phone": "", "proxy": None, "proxy_mode": "auto",
+                                   "stage": "pending", "status": "pending", "cred": False,
+                                   "added": time.time()})
+        label = "自动选择代理"
+    log(f"批量入队 +{count}（{label}）")
     queue_save()
     return {"queued": count, "total": len(state["queue"])}
 
@@ -193,6 +208,9 @@ async def queue_retry_failed():
                 continue
             retryable.append(i)
             t["retries"] = 0
+            if t.get("proxy_mode", "fixed") == "auto" or load_config().get("retry_rotate_proxy", True):
+                t["proxy_mode"] = "auto"
+                t["proxy"] = None
             t["status"] = "pending"; t["stage"] = "手动重试"; t["cred"] = False
     log(f"一键重试失败任务: {len(retryable)} 条" if retryable else "无失败任务可重试")
     queue_save()
@@ -257,6 +275,9 @@ async def queue_retry(req: TaskIdx):
     _retry_guard(t, req.reuse_phone)
     t["reuse_phone"] = req.reuse_phone
     t["retries"] = 0
+    if not req.reuse_phone:
+        t["proxy_mode"] = "auto"
+        t["proxy"] = None
     t["status"] = "pending"; t["stage"] = "手动重试"; t["cred"] = False
     log(f"重试: 任务#{req.idx}")
     queue_save()
@@ -289,11 +310,28 @@ from registration_engine import RegistrationEngine
 from registration_protection import RegistrationProtection
 
 
+_proxy_pool = None
+
+
+def get_proxy_pool():
+    global _proxy_pool
+    state_file = runtime.STATE_DIR / "proxy-pool-state.json"
+    if _proxy_pool is None or _proxy_pool.proxy_file != PROXY_FILE or _proxy_pool.state_file != state_file:
+        _proxy_pool = RegistrationProxyPool(PROXY_FILE, state_file)
+    return _proxy_pool
+
+
 def _proxy_indices():
-    if not PROXY_FILE.exists():
-        return []
-    return list(range(sum(1 for line in PROXY_FILE.read_text(encoding="utf-8-sig").splitlines()
-                          if line.strip() and not line.strip().startswith("#"))))
+    return list(range(len(RegistrationProxyPool.read_lines(PROXY_FILE))))
+
+
+def _proxy_snapshot():
+    busy = [item["task"].get("proxy") for item in ENGINE.active.values()]
+    return get_proxy_pool().snapshot(busy)
+
+
+def _proxy_result(index, success):
+    get_proxy_pool().record_result(index, success)
 
 
 PROTECTION = RegistrationProtection(runtime.STATE_DIR, load_config, lambda: _hz_summary_safe(), log,
@@ -302,7 +340,10 @@ PROTECTION = RegistrationProtection(runtime.STATE_DIR, load_config, lambda: _hz_
 ENGINE = RegistrationEngine(state, load_config, queue_save, log, metrics_save,
                             lambda task: _af_cmd(task),
                             lambda proc: _terminate_registration(proc), runtime.RUN_DIR, PROGRAM_DIR,
-                             protection=PROTECTION, proxy_indices=_proxy_indices)
+                             protection=PROTECTION, proxy_indices=_proxy_indices,
+                              proxy_selector=lambda busy: get_proxy_pool().select(busy),
+                              proxy_used=lambda index: get_proxy_pool().mark_used(index),
+                              proxy_result=_proxy_result)
 
 
 @app.post("/api/engine/start")
@@ -401,20 +442,14 @@ def cont_note(msg: str):
 
 
 def _proxy_total() -> int:
-    if not PROXY_FILE.exists():
-        return 0
-    return sum(1 for ln in PROXY_FILE.read_text(encoding="utf-8").splitlines()
-               if ln.strip() and not ln.strip().startswith("#"))
+    return len(get_proxy_pool().lines())
 
 
-def _next_proxy() -> str:
-    """代理轮转: 一号一IP轮着用(换指纹换IP约束, cursor 跨重启保留)。空池返回 ''。"""
-    n = _proxy_total()
-    if n <= 0:
-        return ""
-    idx = cont["proxy_cursor"] % n
-    cont["proxy_cursor"] += 1
-    return str(idx)
+def _proxy_available() -> int:
+    busy = [item["task"].get("proxy") for item in ENGINE.active.values()]
+    snapshot = get_proxy_pool().snapshot(busy)
+    return sum(1 for item in snapshot["items"]
+               if not item["busy"] and not item["cooling"] and item["healthy"] is not False)
 
 
 async def continuous_loop():
@@ -466,6 +501,11 @@ async def _continuous_tick(c: dict):
             cont["paused"] = "proxy"
             cont_note("代理池为空，暂停补号（每号需一IP，先去代理池页导入）")
         return
+    if _proxy_available() <= 0:
+        if cont["paused"] != "proxy":
+            cont["paused"] = "proxy"
+            cont_note("代理池全部冷却或占用中，暂停补号（冷却结束自动恢复）")
+        return
     # 防线3: 豪猪余额(查询失败不挡——豪猪偶发抖动不该停摆值班)
     s = await asyncio.to_thread(_hz_summary_safe)
     if s is None:
@@ -482,8 +522,9 @@ async def _continuous_tick(c: dict):
     # 派活: 入队(代理轮转) → 引擎没跑就拉起(worker 空闲自停, 下轮缺号再拉)
     want = min(batch, daily_max - cont["added"], min_queue - active)
     for _ in range(want):
-        state["queue"].append({"phone": "", "proxy": _next_proxy(), "stage": "pending",
-                               "status": "pending", "cred": False, "added": time.time()})
+        state["queue"].append({"phone": "", "proxy": None, "proxy_mode": "auto",
+                               "stage": "pending", "status": "pending", "cred": False,
+                               "added": time.time()})
     cont["added"] += want
     cont["paused"] = ""
     queue_save()
@@ -499,6 +540,7 @@ async def continuous_get():
     return {"config": c, "added_today": cont["added"], "date": cont["date"],
             "paused": cont["paused"], "balance": cont["balance"],
             "queue_active": active, "proxy_total": _proxy_total(),
+            "proxy_available": _proxy_available(),
             "logs": cont["logs"][-15:]}
 
 
@@ -833,13 +875,7 @@ PROXY_FILE = Path(os.environ.get("TRAE_PROXY_FILE", str(TOOLS / "proxies.txt")))
 
 @app.get("/api/proxies")
 async def proxies():
-    items = []
-    if PROXY_FILE.exists():
-        for i, ln in enumerate(PROXY_FILE.read_text(encoding="utf-8").splitlines()):
-            ln = ln.strip()
-            if ln and not ln.startswith("#"):
-                items.append({"idx": i, "line": ln, "ok": None, "used": 0})
-    return {"items": items}
+    return _proxy_snapshot()
 
 
 class BulkProxies(BaseModel):
@@ -853,12 +889,17 @@ async def proxies_add(b: BulkProxies):
         raise HTTPException(400, "空")
     PROXY_FILE.parent.mkdir(parents=True, exist_ok=True)
     PROXY_FILE.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    log(f"代理池已导入 {len(lines)} 条")
     return {"added": len(lines)}
 
 
 @app.post("/api/proxies/check")
 async def proxies_check():
-    return {"ok": True, "note": "健康检查走 af_http 出网自动观测"}
+    """真实连通性检查: 经每条代理出网取出口IP, 结果写入代理池状态。"""
+    results = await asyncio.to_thread(get_proxy_pool().check_all)
+    ok = sum(1 for r in results if r.get("ok"))
+    log(f"代理健康检查: {ok}/{len(results)} 可用")
+    return {"ok": True, "checked": len(results), "healthy": ok}
 
 
 @app.get("/api/proxies/export", response_class=PlainTextResponse)
@@ -873,13 +914,11 @@ class ProxyRemove(BaseModel):
 
 @app.post("/api/proxies/remove")
 async def proxies_remove(req: ProxyRemove):
-    if not PROXY_FILE.exists():
-        raise HTTPException(404, "无代理文件")
-    lines = [l for l in PROXY_FILE.read_text(encoding="utf-8").splitlines()
-             if l.strip() and not l.strip().startswith("#")]
+    lines = get_proxy_pool().lines()
     if req.idx < 0 or req.idx >= len(lines):
         raise HTTPException(404, "序号越界")
     removed = lines.pop(req.idx)
+    PROXY_FILE.parent.mkdir(parents=True, exist_ok=True)
     PROXY_FILE.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
     return {"ok": True, "removed": removed}
 

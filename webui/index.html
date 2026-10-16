@@ -321,12 +321,11 @@
       <h2>注册任务</h2>
       <div class="row">
         <label>数量<input id="reg-count" type="number" value="1" min="1" max="10"></label>
-        <label>代理序号<input id="reg-proxy" type="number" value="19" placeholder="19"></label>
+        <label>固定代理#（可选）<input id="reg-proxy" type="number" min="0" placeholder="留空自动选代理"></label>
         <button id="btn-reg-add">加入队列</button>
       </div>
       <div class="row" style="margin-top:12px;">
-        <label>起始代理#<input id="reg-batch-start" type="number" value="19" min="0"></label>
-        <label>结束代理#<input id="reg-batch-end" type="number" value="118" min="0"></label>
+        <label>批量数量<input id="reg-batch-count" type="number" value="20" min="1" max="500"></label>
         <button id="btn-reg-batch">批量入队</button>
       </div>
       <div class="row" style="margin-top:12px;">
@@ -334,7 +333,7 @@
         <button id="btn-engine-stop" class="danger">停止注册引擎</button>
         <button id="btn-retry-failed" class="secondary">一键重试失败</button>
       </div>
-      <p style="color:var(--muted);margin:10px 0 0;">注册使用独立注册代理；浏览器仅用于滑块，注册和凭证获取走 HTTP。每号独立指纹与 IP。</p>
+      <p style="color:var(--muted);margin:10px 0 0;">代理由程序自动选择：一号一 IP 轮转，用过的代理冷却 30 分钟，可指定固定代理覆盖。浏览器仅用于滑块，注册和凭证获取走 HTTP。</p>
       <h3>注册队列</h3>
       <div class="row" style="margin-bottom:12px;"><span id="hz-engine-state" style="color:var(--muted)"></span><span id="queue-filter-summary" style="color:var(--muted);font-size:12px;"></span></div>
       <div class="queue-scroll"><table><thead><tr><th><button class="queue-head" data-queue-sort="phone">手机号 <span>↕</span></button><button class="queue-head" data-queue-filter="phone" aria-label="筛选手机号">▾</button></th><th><button class="queue-head" data-queue-sort="proxy">代理 <span>↕</span></button><button class="queue-head" data-queue-filter="proxy" aria-label="筛选代理">▾</button></th><th><button class="queue-head" data-queue-sort="stage">阶段 <span>↕</span></button><button class="queue-head" data-queue-filter="stage" aria-label="筛选阶段">▾</button></th><th><button class="queue-head" data-queue-sort="status">状态 <span>↕</span></button><button class="queue-head" data-queue-filter="status" aria-label="筛选状态">▾</button></th><th><button class="queue-head" data-queue-sort="credential">凭证 <span>↕</span></button><button class="queue-head" data-queue-filter="credential" aria-label="筛选凭证">▾</button></th><th>操作</th></tr></thead>
@@ -478,8 +477,8 @@
         <button id="btn-proxy-export" class="secondary">导出</button>
       </div>
       <table>
-        <thead><tr><th>#</th><th>代理</th><th>状态</th><th>累计使用</th></tr></thead>
-        <tbody id="proxy-body"><tr><td colspan="4" style="color:var(--muted)">空</td></tr></tbody>
+        <thead><tr><th>#</th><th>代理</th><th>状态</th><th>冷却</th><th>成功/失败</th><th>累计使用</th><th></th></tr></thead>
+        <tbody id="proxy-body"><tr><td colspan="7" style="color:var(--muted)">空</td></tr></tbody>
       </table>
     </div>
   </section>
@@ -643,6 +642,7 @@ const queueFilters = {phone:'', proxy:null, stage:null, status:null, credential:
 const queueStatusRank = {running:0, waiting_code:1, fail:2, reconciliation_unknown:3, pending:4, ok:5};
 function queueField(task, key) {
   if (key === 'credential') return task.cred ? '有凭证' : '无凭证';
+  if (key === 'proxy' && (task[key] === null || task[key] === undefined)) return '自动';
   return String(task[key] ?? '—');
 }
 function renderQueueRows() {
@@ -669,7 +669,7 @@ function renderQueueRows() {
     if (t.status === 'waiting_code') acts.push(`<input class="code" data-i="${i}" placeholder="输码"><button class="secondary" data-code="${i}">续</button>`);
     if (['fail','reconciliation_unknown'].includes(t.status)) acts.push(`<button class="secondary" data-retry="${i}">重试</button>`);
     acts.push(`<button class="danger" data-rm="${i}">移除</button>`);
-    return `<tr><td>${esc(t.phone || '—')}</td><td>#${esc(t.proxy ?? '—')}</td><td>${esc(t.stage || '—')}</td><td><span class="tag ${t.status === 'running' ? 'run' : t.status === 'ok' ? 'ok' : t.status === 'fail' ? 'bad' : 'wait'}">${esc(t.status || 'pending')}</span></td><td>${t.cred ? '★' : ''}</td><td>${acts.join(' ')}</td></tr>`;
+    return `<tr><td>${esc(t.phone || '—')}</td><td>${t.proxy === null || t.proxy === undefined ? '<span style="color:var(--muted)">自动</span>' : '#' + esc(t.proxy)}</td><td>${esc(t.stage || '—')}</td><td><span class="tag ${t.status === 'running' ? 'run' : t.status === 'ok' ? 'ok' : t.status === 'fail' ? 'bad' : 'wait'}">${esc(t.status || 'pending')}</span></td><td>${t.cred ? '★' : ''}</td><td>${acts.join(' ')}</td></tr>`;
   }).join('') : '<tr><td colspan="6" style="color:var(--muted)">无匹配任务</td></tr>';
   const active = Object.values(queueFilters).filter(value => value && (value instanceof Set ? value.size : true)).length;
   $('queue-filter-summary').textContent = active ? `筛选后 ${rows.length} / ${queueData.length} 条` : `共 ${queueData.length} 条`;
@@ -822,18 +822,19 @@ $('btn-upstream-key').onclick = async () => {
 };
 $('btn-reg-add').onclick = async () => {
   try {
-    await api('/queue', {method: 'POST', body: JSON.stringify({
-      count: +$('reg-count').value || 1, proxy: +$('reg-proxy').value || 19})});
+    const fixedRaw = $('reg-proxy').value.trim();
+    const body = {count: +$('reg-count').value || 1};
+    if (fixedRaw !== '' && +fixedRaw >= 0) body.proxy = +fixedRaw;
+    await api('/queue', {method: 'POST', body: JSON.stringify(body)});
     toast('已加入队列'); loadWork();
   } catch (e) { toast('失败: ' + e.message); }
 };
 $('btn-reg-batch').onclick = async () => {
-  const s = +$('reg-batch-start').value, e = +$('reg-batch-end').value;
-  if (!(s >= 0) || e < s) return toast('代理范围无效');
-  if (!confirm(`将代理 #${s}~#${e} 共 ${e - s + 1} 条任务入队？`)) return;
+  const n = +$('reg-batch-count').value || 0;
+  if (!(n >= 1)) return toast('批量数量无效');
+  if (!confirm(`将 ${n} 条任务入队（代理自动选择）？`)) return;
   try {
-    const r = await api('/queue/batch', {method: 'POST', body: JSON.stringify({
-      proxy_start: s, proxy_end: e})});
+    const r = await api('/queue/batch', {method: 'POST', body: JSON.stringify({count: n})});
     toast(`已入队 ${r.queued} 条（队列共 ${r.total}）`); loadWork();
   } catch (e2) { toast('失败: ' + e2.message); }
 };
@@ -1115,12 +1116,17 @@ async function loadProxy() {
   try {
     const p = await api('/proxies');
     metric($('proxy-metrics'), [
-      ['总数', p.items.length], ['可用', p.items.filter(x => x.ok !== false).length, 'ok'],
-      ['失败', p.items.filter(x => x.ok === false).length, 'err']]);
-    $('proxy-body').innerHTML = p.items.length ? p.items.map((x, i) => `<tr>
-      <td>${i + 1}</td><td>${esc(x.line)}</td>
-      <td>${x.ok === false ? '<span class="tag bad">失败</span>' : x.ok ? '<span class="tag ok">可用</span>' : '<span class="tag">未测</span>'}</td>
-      <td>${x.used || 0} <button class="danger" data-prm="${i}" style="padding:2px 8px;font-size:12px;">删</button></td></tr>`).join('') : '<tr><td colspan="4" style="color:var(--muted)">空</td></tr>';
+      ['总数', p.total], ['可用', p.available, 'ok'],
+      ['冷却中', p.cooling], ['占用中', p.busy]]);
+    $('proxy-body').innerHTML = p.items.length ? p.items.map(x => `<tr>
+      <td>${x.idx}</td><td>${esc(x.host || '—')}</td>
+      <td>${x.busy ? '<span class="tag run">占用</span>'
+        : x.healthy === false ? '<span class="tag bad" title="' + esc(x.last_error || '') + '">失败</span>'
+        : x.healthy ? '<span class="tag ok">健康</span>' : '<span class="tag">未测</span>'}</td>
+      <td>${x.cooling ? Math.ceil(x.ready_in_sec / 60) + ' 分钟' : '—'}</td>
+      <td>${x.successes || 0} / ${x.failures || 0}</td>
+      <td>${x.uses || 0}</td>
+      <td><button class="danger" data-prm="${x.idx}" style="padding:2px 8px;font-size:12px;">删</button></td></tr>`).join('') : '<tr><td colspan="7" style="color:var(--muted)">空</td></tr>';
     $('proxy-body').querySelectorAll('[data-prm]').forEach(b => b.onclick = async () => {
       try { await api('/proxies/remove', {method:'POST', body: JSON.stringify({idx:+b.dataset.prm})});
         loadProxy(); } catch (e) { toast(e.message); }

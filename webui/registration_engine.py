@@ -10,11 +10,13 @@ from pathlib import Path
 
 class RegistrationEngine:
     def __init__(self, state, config, save, log, metrics, command, terminate, runs, cwd,
-                 protection=None, proxy_indices=None):
+                 protection=None, proxy_indices=None, proxy_selector=None, proxy_used=None,
+                 proxy_result=None):
         self.state, self.config, self.save, self.log = state, config, save, log
         self.metrics, self.command, self.terminate = metrics, command, terminate
         self.runs, self.cwd = Path(runs), Path(cwd)
         self.protection, self.proxy_indices = protection, proxy_indices or (lambda: [])
+        self.proxy_selector, self.proxy_used, self.proxy_result = proxy_selector, proxy_used, proxy_result
         self.active = {}
         self.stopping = False
         self._transition_lock = asyncio.Lock()
@@ -76,11 +78,35 @@ class RegistrationEngine:
         finally:
             self.stopping = False
 
+    def _proxy_mode(self, task):
+        return task.get("proxy_mode", "fixed" if task.get("proxy") is not None else "auto")
+
+    def _assign_proxy(self, task):
+        if self._proxy_mode(task) != "auto":
+            return True
+        if self.proxy_selector is None:
+            return bool(task.get("proxy") is not None)
+        busy = [x["task"].get("proxy") for x in self.active.values()]
+        selected = self.proxy_selector(busy)
+        if selected is None:
+            task["stage"] = "等待代理冷却或释放"
+            return False
+        task["proxy"] = selected
+        task.pop("proxy_error", None)
+        return True
+
     def _candidate(self):
         busy = {str(x["task"].get("proxy")) for x in self.active.values()}
-        return next((t for t in self.state["queue"]
-                     if t["status"] == "pending" and str(t.get("proxy")) not in busy
-                     and t.get("retry_at", 0) <= time.time()), None)
+        for task in self.state["queue"]:
+            if task["status"] != "pending" or task.get("retry_at", 0) > time.time():
+                continue
+            if self._proxy_mode(task) == "auto":
+                if self._assign_proxy(task):
+                    return task
+                continue
+            if str(task.get("proxy")) not in busy:
+                return task
+        return None
 
     async def supervise(self):
         tasks = set()
@@ -172,17 +198,9 @@ class RegistrationEngine:
     def _rotate_proxy(self, task):
         if not self.config().get("retry_rotate_proxy", True) or task.get("reuse_phone"):
             return
-        choices = list(self.proxy_indices())
-        busy = {str(x["task"].get("proxy")) for x in self.active.values()}
-        old = str(task.get("proxy"))
-        if old in [str(x) for x in choices]:
-            at = [str(x) for x in choices].index(old)
-            choices = choices[at + 1:] + choices[:at]
-        new = next((p for p in choices if str(p) != old and str(p) not in busy), None)
-        if new is not None:
-            task["previous_proxy"], task["proxy"] = task.get("proxy"), new
-        elif choices:
-            task["retry_note"] = "暂无不同的空闲代理"
+        task["proxy_mode"] = "auto"
+        task["proxy"] = None
+        task.pop("proxy_error", None)
 
     async def run(self, task):
         task.setdefault("id", uuid.uuid4().hex)
@@ -222,6 +240,8 @@ class RegistrationEngine:
                     self.pause(reason)
                     return
                 admitted = True
+            if self.proxy_used is not None and task.get("proxy") is not None:
+                self.proxy_used(task["proxy"])
             with logfile.open("ab", buffering=0) as output:
                 launch = asyncio.create_task(asyncio.create_subprocess_exec(
                     *self.command(task), cwd=self.cwd, env=env,
@@ -289,6 +309,8 @@ class RegistrationEngine:
                 elif not cancelled:
                     task.setdefault("error_category", "sms_timeout" if timed_out else "registration")
                     self._failure(task)
+                if spawned and self.proxy_result is not None and task.get("proxy") is not None:
+                    self.proxy_result(task["proxy"], success)
                 self.metrics({"event": "ok" if success else "fail", "phone": task.get("phone", ""),
                               "run_id": task["run_id"], "attempt_id": task["attempt_id"],
                               "proxy": task.get("proxy"), "stage": task["stage"],
