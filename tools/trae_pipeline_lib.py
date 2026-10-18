@@ -29,7 +29,7 @@ import requests
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 
-# ─────────────────────────── 常量(全部对齐 agent2api trae 模块) ───────────────────────────
+# ─────────────────────────── 常量（按 Trae 客户端协议组织） ───────────────────────────
 
 PLUGIN_VERSION = "1.0.0"
 DEVICE_NAME = "DESKTOP-TRAE"
@@ -60,7 +60,7 @@ ACCOUNT_API_ORIGINS = ["https://api.trae.cn", "https://api.trae.com.cn"]
 CN_DEFAULT_ORIGINS = ["https://api.trae.cn", "https://api.trae.com.cn", "https://www.trae.cn"]
 
 PASSPORT_AID = 711126
-# 公共协议参数；请求现场参数由运行时配置提供。
+# 短信登录参数由运行时提供；源码不保存请求现场材料。
 CAPTURED_PASSPORT_PARAMS = {
     "passport_jssdk_version": "3.0.11",
     "passport_jssdk_type": "normal",
@@ -606,8 +606,8 @@ def extract_login_host(body: str) -> str:
 
 # ─────────────────────────── Passport: sms_login(纯 HTTP 注册/登录) ───────────────────────────
 
-
-CAPTURED_SMS_LOGIN_URL = ""
+# 短信登录 URL 仅从环境变量读取，避免将请求现场材料写入源码。
+CAPTURED_SMS_LOGIN_URL = os.environ.get("TRAE_SMS_LOGIN_URL", "").strip()
 CAPTURED_CSRF_TOKEN = ""
 CAPTURED_TRACE_ID = ""
 
@@ -623,6 +623,10 @@ def sms_login(mobile: str, code: str, cookies: dict, csrf_token: str = None,
     - proxies: 传给 requests 的 proxies dict(代理行号解析后的形态)
     返回 (parsed_json, resp)。message=success 即注册/登录成功。
     """
+    if not CAPTURED_SMS_LOGIN_URL:
+        raise ValueError("旧版 sms_login 需要当前会话的 TRAE_SMS_LOGIN_URL，不使用历史抓包常量")
+    if not (csrf_token or cookies.get("passport_csrf_token")):
+        raise ValueError("sms_login 需要当前会话的 CSRF token")
     session = session or requests.Session()
     body = ("mix_mode=1"
             f"&mobile={xor05_hex(mobile)}"
@@ -632,10 +636,10 @@ def sms_login(mobile: str, code: str, cookies: dict, csrf_token: str = None,
         "Accept": "application/json, text/javascript",
         "Content-Type": "application/x-www-form-urlencoded",
         "x-tt-passport-csrf-token": csrf_token or cookies.get("passport_csrf_token") or CAPTURED_CSRF_TOKEN,
-        "x-tt-passport-trace-id": trace_id or CAPTURED_TRACE_ID,
+        "x-tt-passport-trace-id": trace_id or uuidlib.uuid4().hex[:8],
         "Origin": "https://www.trae.cn",
         "Referer": "https://www.trae.cn/login",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/203.0.113.1 Safari/537.36",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
     }
     resp = session.post(CAPTURED_SMS_LOGIN_URL, data=body, headers=headers, cookies=cookies,
                         timeout=30, proxies=proxies)

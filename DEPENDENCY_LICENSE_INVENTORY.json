@@ -1,0 +1,444 @@
+[
+  {
+    "name": "aiohappyeyeballs",
+    "requiredVersion": "2.7.1",
+    "installedVersion": "2.7.1",
+    "licenseExpression": null,
+    "licenseSummary": "PSF-2.0",
+    "licenseClassifiers": [
+      "OSI Approved :: Python Software Foundation License"
+    ],
+    "review": "metadata-only; bundled-assets and full license require review"
+  },
+  {
+    "name": "aiohttp",
+    "requiredVersion": "3.14.5",
+    "installedVersion": "3.14.5",
+    "licenseExpression": "Apache-2.0 AND MIT",
+    "licenseSummary": null,
+    "licenseClassifiers": [],
+    "review": "metadata-only; bundled-assets and full license require review"
+  },
+  {
+    "name": "aiosignal",
+    "requiredVersion": "1.4.0",
+    "installedVersion": "1.4.0",
+    "licenseExpression": null,
+    "licenseSummary": "Apache 2.0",
+    "licenseClassifiers": [
+      "OSI Approved :: Apache Software License"
+    ],
+    "review": "metadata-only; bundled-assets and full license require review"
+  },
+  {
+    "name": "annotated-doc",
+    "requiredVersion": "0.0.5",
+    "installedVersion": "0.0.5",
+    "licenseExpression": "MIT",
+    "licenseSummary": null,
+    "licenseClassifiers": [],
+    "review": "metadata-only; bundled-assets and full license require review"
+  },
+  {
+    "name": "annotated-types",
+    "requiredVersion": "0.8.0",
+    "installedVersion": "0.8.0",
+    "licenseExpression": "MIT",
+    "licenseSummary": null,
+    "licenseClassifiers": [
+      "OSI Approved :: MIT License"
+    ],
+    "review": "metadata-only; bundled-assets and full license require review"
+  },
+  {
+    "name": "anyio",
+    "requiredVersion": "4.15.1",
+    "installedVersion": "4.15.1",
+    "licenseExpression": "MIT",
+    "licenseSummary": null,
+    "licenseClassifiers": [],
+    "review": "metadata-only; bundled-assets and full license require review"
+  },
+  {
+    "name": "attrs",
+    "requiredVersion": "26.1.0",
+    "installedVersion": "26.1.0",
+    "licenseExpression": "MIT",
+    "licenseSummary": null,
+    "licenseClassifiers": [],
+    "review": "metadata-only; bundled-assets and full license require review"
+  },
+  {
+    "name": "captcha-recognizer",
+    "requiredVersion": "1.0.2",
+    "installedVersion": "1.0.2",
+    "licenseExpression": null,
+    "licenseSummary": "MIT",
+    "licenseClassifiers": [],
+    "review": "metadata-only; bundled-assets and full license require review"
+  },
+  {
+    "name": "certifi",
+    "requiredVersion": "2026.7.22",
+    "installedVersion": "2026.7.22",
+    "licenseExpression": null,
+    "licenseSummary": "MPL-2.0",
+    "licenseClassifiers": [
+      "OSI Approved :: Mozilla Public License 2.0 (MPL 2.0)"
+    ],
+    "review": "metadata-only; bundled-assets and full license require review"
+  },
+  {
+    "name": "cffi",
+    "requiredVersion": "2.1.1",
+    "installedVersion": "2.1.1",
+    "licenseExpression": "MIT-0",
+    "licenseSummary": null,
+    "licenseClassifiers": [],
+    "review": "metadata-only; bundled-assets and full license require review"
+  },
+  {
+    "name": "charset-normalizer",
+    "requiredVersion": "3.5.2",
+    "installedVersion": "3.5.2",
+    "licenseExpression": null,
+    "licenseSummary": "MIT",
+    "licenseClassifiers": [],
+    "review": "metadata-only; bundled-assets and full license require review"
+  },
+  {
+    "name": "click",
+    "requiredVersion": "8.5.0",
+    "installedVersion": "8.5.0",
+    "licenseExpression": "BSD-3-Clause",
+    "licenseSummary": null,
+    "licenseClassifiers": [],
+    "review": "metadata-only; bundled-assets and full license require review"
+  },
+  {
+    "name": "cloakbrowser",
+    "requiredVersion": "0.6.2",
+    "installedVersion": "0.6.2",
+    "licenseExpression": "MIT",
+    "licenseSummary": null,
+    "licenseClassifiers": [
+      "OSI Approved :: MIT License"
+    ],
+    "review": "metadata-only; bundled-assets and full license require review"
+  },
+  {
+    "name": "cryptography",
+    "requiredVersion": "50.0.2",
+    "installedVersion": "50.0.2",
+    "licenseExpression": "Apache-2.0 OR BSD-3-Clause",
+    "licenseSummary": null,
+    "licenseClassifiers": [],
+    "review": "metadata-only; bundled-assets and full license require review"
+  },
+  {
+    "name": "fastapi",
+    "requiredVersion": "0.143.0",
+    "installedVersion": "0.143.0",
+    "licenseExpression": "MIT",
+    "licenseSummary": null,
+    "licenseClassifiers": [],
+    "review": "metadata-only; bundled-assets and full license require review"
+  },
+  {
+    "name": "flatbuffers",
+    "requiredVersion": "25.12.19",
+    "installedVersion": "25.12.19",
+    "licenseExpression": null,
+    "licenseSummary": "Apache 2.0",
+    "licenseClassifiers": [
+      "OSI Approved :: Apache Software License"
+    ],
+    "review": "metadata-only; bundled-assets and full license require review"
+  },
+  {
+    "name": "frozenlist",
+    "requiredVersion": "1.8.0",
+    "installedVersion": "1.8.0",
+    "licenseExpression": null,
+    "licenseSummary": "Apache-2.0",
+    "licenseClassifiers": [],
+    "review": "metadata-only; bundled-assets and full license require review"
+  },
+  {
+    "name": "geoip2",
+    "requiredVersion": "5.3.0",
+    "installedVersion": "5.3.0",
+    "licenseExpression": "Apache-2.0",
+    "licenseSummary": null,
+    "licenseClassifiers": [],
+    "review": "metadata-only; bundled-assets and full license require review"
+  },
+  {
+    "name": "greenlet",
+    "requiredVersion": "3.5.6",
+    "installedVersion": "3.5.6",
+    "licenseExpression": "MIT AND PSF-2.0",
+    "licenseSummary": null,
+    "licenseClassifiers": [],
+    "review": "metadata-only; bundled-assets and full license require review"
+  },
+  {
+    "name": "h11",
+    "requiredVersion": "0.16.0",
+    "installedVersion": "0.16.0",
+    "licenseExpression": null,
+    "licenseSummary": "MIT",
+    "licenseClassifiers": [
+      "OSI Approved :: MIT License"
+    ],
+    "review": "metadata-only; bundled-assets and full license require review"
+  },
+  {
+    "name": "httpcore",
+    "requiredVersion": "1.0.9",
+    "installedVersion": "1.0.9",
+    "licenseExpression": "BSD-3-Clause",
+    "licenseSummary": null,
+    "licenseClassifiers": [
+      "OSI Approved :: BSD License"
+    ],
+    "review": "metadata-only; bundled-assets and full license require review"
+  },
+  {
+    "name": "httpx",
+    "requiredVersion": "0.28.1",
+    "installedVersion": "0.28.1",
+    "licenseExpression": null,
+    "licenseSummary": "BSD-3-Clause",
+    "licenseClassifiers": [
+      "OSI Approved :: BSD License"
+    ],
+    "review": "metadata-only; bundled-assets and full license require review"
+  },
+  {
+    "name": "idna",
+    "requiredVersion": "3.20",
+    "installedVersion": "3.20",
+    "licenseExpression": "BSD-3-Clause",
+    "licenseSummary": null,
+    "licenseClassifiers": [],
+    "review": "metadata-only; bundled-assets and full license require review"
+  },
+  {
+    "name": "maxminddb",
+    "requiredVersion": "3.2.0",
+    "installedVersion": "3.2.0",
+    "licenseExpression": "Apache-2.0",
+    "licenseSummary": null,
+    "licenseClassifiers": [],
+    "review": "metadata-only; bundled-assets and full license require review"
+  },
+  {
+    "name": "multidict",
+    "requiredVersion": "7.1.0",
+    "installedVersion": "7.1.0",
+    "licenseExpression": "Apache-2.0",
+    "licenseSummary": null,
+    "licenseClassifiers": [],
+    "review": "metadata-only; bundled-assets and full license require review"
+  },
+  {
+    "name": "numpy",
+    "requiredVersion": "2.5.4",
+    "installedVersion": "2.5.4",
+    "licenseExpression": "BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0",
+    "licenseSummary": null,
+    "licenseClassifiers": [],
+    "review": "metadata-only; bundled-assets and full license require review"
+  },
+  {
+    "name": "onnxruntime",
+    "requiredVersion": "1.31.0",
+    "installedVersion": "1.31.0",
+    "licenseExpression": null,
+    "licenseSummary": "MIT License",
+    "licenseClassifiers": [
+      "OSI Approved :: MIT License"
+    ],
+    "review": "metadata-only; bundled-assets and full license require review"
+  },
+  {
+    "name": "opencv-python",
+    "requiredVersion": "5.0.0.93",
+    "installedVersion": "5.0.0.93",
+    "licenseExpression": null,
+    "licenseSummary": "Apache 2.0",
+    "licenseClassifiers": [
+      "OSI Approved :: Apache Software License"
+    ],
+    "review": "metadata-only; bundled-assets and full license require review"
+  },
+  {
+    "name": "opentelemetry-api",
+    "requiredVersion": "1.45.1",
+    "installedVersion": "1.45.1",
+    "licenseExpression": "Apache-2.0",
+    "licenseSummary": null,
+    "licenseClassifiers": [],
+    "review": "metadata-only; bundled-assets and full license require review"
+  },
+  {
+    "name": "packaging",
+    "requiredVersion": "26.3",
+    "installedVersion": "26.3",
+    "licenseExpression": "Apache-2.0 OR BSD-2-Clause",
+    "licenseSummary": null,
+    "licenseClassifiers": [],
+    "review": "metadata-only; bundled-assets and full license require review"
+  },
+  {
+    "name": "playwright",
+    "requiredVersion": "1.63.0",
+    "installedVersion": "1.63.0",
+    "licenseExpression": "Apache-2.0",
+    "licenseSummary": null,
+    "licenseClassifiers": [],
+    "review": "metadata-only; bundled-assets and full license require review"
+  },
+  {
+    "name": "propcache",
+    "requiredVersion": "0.5.4",
+    "installedVersion": "0.5.4",
+    "licenseExpression": null,
+    "licenseSummary": "Apache-2.0",
+    "licenseClassifiers": [],
+    "review": "metadata-only; bundled-assets and full license require review"
+  },
+  {
+    "name": "protobuf",
+    "requiredVersion": "7.36.2",
+    "installedVersion": "7.36.2",
+    "licenseExpression": null,
+    "licenseSummary": "3-Clause BSD License",
+    "licenseClassifiers": [],
+    "review": "metadata-only; bundled-assets and full license require review"
+  },
+  {
+    "name": "pycparser",
+    "requiredVersion": "3.11",
+    "installedVersion": "3.11",
+    "licenseExpression": "BSD-3-Clause",
+    "licenseSummary": null,
+    "licenseClassifiers": [],
+    "review": "metadata-only; bundled-assets and full license require review"
+  },
+  {
+    "name": "pydantic",
+    "requiredVersion": "2.14.1",
+    "installedVersion": "2.14.1",
+    "licenseExpression": "MIT",
+    "licenseSummary": null,
+    "licenseClassifiers": [],
+    "review": "metadata-only; bundled-assets and full license require review"
+  },
+  {
+    "name": "pydantic_core",
+    "requiredVersion": "2.50.1",
+    "installedVersion": "2.50.1",
+    "licenseExpression": "MIT",
+    "licenseSummary": null,
+    "licenseClassifiers": [],
+    "review": "metadata-only; bundled-assets and full license require review"
+  },
+  {
+    "name": "pyee",
+    "requiredVersion": "13.0.1",
+    "installedVersion": "13.0.1",
+    "licenseExpression": null,
+    "licenseSummary": "MIT",
+    "licenseClassifiers": [
+      "OSI Approved :: MIT License"
+    ],
+    "review": "metadata-only; bundled-assets and full license require review"
+  },
+  {
+    "name": "requests",
+    "requiredVersion": "2.34.2",
+    "installedVersion": "2.34.2",
+    "licenseExpression": null,
+    "licenseSummary": "Apache-2.0",
+    "licenseClassifiers": [
+      "OSI Approved :: Apache Software License"
+    ],
+    "review": "metadata-only; bundled-assets and full license require review"
+  },
+  {
+    "name": "shapely",
+    "requiredVersion": "2.2.0",
+    "installedVersion": "2.2.0",
+    "licenseExpression": "BSD-3-Clause",
+    "licenseSummary": null,
+    "licenseClassifiers": [],
+    "review": "metadata-only; bundled-assets and full license require review"
+  },
+  {
+    "name": "socksio",
+    "requiredVersion": "1.0.0",
+    "installedVersion": "1.0.0",
+    "licenseExpression": null,
+    "licenseSummary": "UNKNOWN",
+    "licenseClassifiers": [
+      "OSI Approved :: MIT License"
+    ],
+    "review": "metadata-only; bundled-assets and full license require review"
+  },
+  {
+    "name": "starlette",
+    "requiredVersion": "1.8.0",
+    "installedVersion": "1.8.0",
+    "licenseExpression": "BSD-3-Clause",
+    "licenseSummary": null,
+    "licenseClassifiers": [],
+    "review": "metadata-only; bundled-assets and full license require review"
+  },
+  {
+    "name": "typing-inspection",
+    "requiredVersion": "0.4.4",
+    "installedVersion": "0.4.4",
+    "licenseExpression": "MIT",
+    "licenseSummary": null,
+    "licenseClassifiers": [],
+    "review": "metadata-only; bundled-assets and full license require review"
+  },
+  {
+    "name": "typing_extensions",
+    "requiredVersion": "4.16.0",
+    "installedVersion": "4.16.0",
+    "licenseExpression": "PSF-2.0",
+    "licenseSummary": null,
+    "licenseClassifiers": [],
+    "review": "metadata-only; bundled-assets and full license require review"
+  },
+  {
+    "name": "urllib3",
+    "requiredVersion": "2.8.0",
+    "installedVersion": "2.8.0",
+    "licenseExpression": "MIT",
+    "licenseSummary": null,
+    "licenseClassifiers": [],
+    "review": "metadata-only; bundled-assets and full license require review"
+  },
+  {
+    "name": "uvicorn",
+    "requiredVersion": "0.54.0",
+    "installedVersion": "0.54.0",
+    "licenseExpression": "BSD-3-Clause",
+    "licenseSummary": null,
+    "licenseClassifiers": [],
+    "review": "metadata-only; bundled-assets and full license require review"
+  },
+  {
+    "name": "yarl",
+    "requiredVersion": "1.25.1",
+    "installedVersion": "1.25.1",
+    "licenseExpression": null,
+    "licenseSummary": "Apache-2.0",
+    "licenseClassifiers": [],
+    "review": "metadata-only; bundled-assets and full license require review"
+  }
+]

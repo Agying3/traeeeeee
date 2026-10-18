@@ -147,7 +147,7 @@ class RegistrationProtection:
     async def before_launch(self, task):
         async with self.lock:
             cfg = self.config()
-            price = cents(cfg.get("sms_unit_price", 1.1))
+            price = cents(task.get("run_options", {}).get("sms_unit_price", cfg.get("sms_unit_price", 1.1)))
             budget = self.budget()
             if budget["enabled"] and cents(max(0, budget["available"])) < price:
                 return "预算可用额度不足，暂停派发；补充预算后重新启动"
@@ -234,7 +234,12 @@ class RegistrationProtection:
             row = ledger.get_attempt(aid) or row
         row = row or {}
         state = self._settle(aid, row, interrupted, spawned)
-        details = {"budget_state": state}
+        with self._db() as db:
+            reservation = db.execute("SELECT price FROM reservations WHERE attempt_id=?", (aid,)).fetchone()
+        amount = (reservation[0] if reservation else 0) / 100
+        details = {"budget_state": state,
+                   "estimated_cost": amount if state == "estimated" else 0,
+                   "uncertain_cost": amount if state in ("uncertain", "reserved") else 0}
         for key in ("phone", "code_source", "error_category", "held", "credential_saved"):
             if row.get(key) is not None:
                 details[key] = row[key]

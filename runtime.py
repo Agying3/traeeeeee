@@ -37,11 +37,12 @@ def atomic_json(path: Path, data) -> None:
 
 
 def initialize(migrate: bool = True) -> dict:
+    os.environ.setdefault("TRAE_REGISTRATION_DISABLED", "1")
     for path in (STATE_DIR, CONFIG_DIR, LOG_DIR, CRED_DIR, RUN_DIR,
                  DATA_DIR / "http-trace", DATA_DIR / "register-diagnostics",
                  DATA_DIR / "cloak-profiles"):
         path.mkdir(parents=True, exist_ok=True)
-    # {意图：通过子进程继承路径；旧研究命令未带这些变量时继续使用旧目录。}
+    # {意图：通过子进程继承运行时路径；直接调用时仍兼容默认目录。}
     os.environ["TRAE_DATA_DIR"] = str(DATA_DIR)
     os.environ["TRAE_PROXY_FILE"] = str(CONFIG_DIR / "proxies.txt")
     os.environ["TRAE_HAOZHU_FILE"] = str(CONFIG_DIR / "haozhu.json")
@@ -51,23 +52,8 @@ def initialize(migrate: bool = True) -> dict:
     marker = STATE_DIR / "migration.json"
     if marker.exists() or not migrate:
         return {"migrated": False}
-    sources = [(APP_DIR / "webui" / name, STATE_DIR / name)
-               for name in ("queue.json", "metrics.json", "continuous.json")]
-    sources += [(APP_DIR / "webui" / "config.json", CONFIG_DIR / "webui.json"),
-                (WORKSPACE / "tmp" / "haozhu.json", CONFIG_DIR / "haozhu.json")]
-    proxy = APP_DIR / "tools" / "proxies.txt"
-    if not proxy.exists() or not proxy.read_text(encoding="utf-8-sig").strip():
-        proxy = WORKSPACE / "Webshare 250 proxies.txt"
-    sources.append((proxy, CONFIG_DIR / "proxies.txt"))
-    sources.extend((src, CRED_DIR / src.name)
-                   for src in (WORKSPACE / "tmp" / "register-credentials").glob("*.json"))
+    # {意图：公开副本只初始化本目录；首次启动不导入其他目录的账号、代理或配置。}
     copied = []
-    for source, dest in sources:
-        if source.is_file() and not dest.exists():
-            shutil.copy2(source, dest)
-            copied.append({"source": str(source), "destination": str(dest),
-                           "bytes": dest.stat().st_size,
-                           "sha256": hashlib.sha256(dest.read_bytes()).hexdigest()})
     record = {"time": datetime.now(timezone.utc).isoformat(), "files": copied}
     atomic_json(marker, record)
     return {"migrated": True, "files": len(copied)}

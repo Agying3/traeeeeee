@@ -31,7 +31,7 @@ from haozhu_ledger import Ledger, account_fingerprint, receipt_hash
 import requests
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-CRED_FILE = pathlib.Path(os.environ.get("TRAE_HAOZHU_FILE", str(ROOT / "tmp" / "haozhu.json")))
+CRED_FILE = pathlib.Path(os.environ.get("TRAE_HAOZHU_FILE", str(pathlib.Path(os.environ.get("TRAE_DATA_DIR", str(pathlib.Path(__file__).resolve().parents[1] / "data"))) / "config" / "haozhu.json")))
 BASE = "https://api.haozhuma.com/sms/"
 CODE_RE = re.compile(r"验证码[^0-9]{0,8}([0-9]{4,8})")
 ANY_CODE_RE = re.compile(r"(?<!\d)(\d{4,8})(?!\d)")

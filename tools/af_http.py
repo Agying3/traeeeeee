@@ -14,20 +14,20 @@ import os
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-sys.path.insert(0, os.environ.get("TRAE_SLIDER_LIB", str(ROOT / "slider-captcha-lab-main")))
+sys.path.insert(0, os.environ.get("TRAE_SLIDER_LIB", str(pathlib.Path(__file__).resolve().parents[1] / "vendor" / "slider")))
 
 import trae_pipeline_lib as lib
 from stage1_browser_captcha import PROXY_FILE, solve_slider, WAIT_SECONDS
 from page_diagnostics import PageDiagnostics
 from registration_control import emit, options, public_log, wait_sms
 
-DATA_DIR = pathlib.Path(os.environ.get("TRAE_DATA_DIR", str(ROOT / "tmp")))
+DATA_DIR = pathlib.Path(os.environ.get("TRAE_DATA_DIR", str(pathlib.Path(__file__).resolve().parents[1] / "data")))
 RUN_ID = os.environ.get("TRAE_RUN_ID") or (time.strftime("%Y%m%d-%H%M%S") + "-afhttp-" + __import__("uuid").uuid4().hex[:8])
 RUN_DIR = DATA_DIR / "register-diagnostics" / RUN_ID
 TRACE = DATA_DIR / "http-trace" / (RUN_ID + ".jsonl")
 PROFILES = DATA_DIR / "cloak-profiles"
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-      "(KHTML, like Gecko) Chrome/203.0.113.1 Safari/537.36")
+      "(KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36")
 
 _trace_f = None
 
@@ -155,7 +155,9 @@ async def _main_impl():
 
     from haozhu_sms import build_client
     from haozhu_ledger import Ledger, receipt_hash
-    hz = build_client({}, ledger=Ledger(), attempt_id=_ACTIVE_ATTEMPT, run_id=RUN_ID)
+    options = json.loads(os.environ.get("TRAE_RUN_OPTIONS", "{}"))
+    sms_options = {key: options[key] for key in ("sid", "uid", "uids") if key in options}
+    hz = build_client(sms_options, ledger=Ledger(), attempt_id=_ACTIVE_ATTEMPT, run_id=RUN_ID)
     hz.begin_attempt(proxy={"index": idx})
     _set_number_state(hz, "")
     hz.ensure_login()
@@ -188,10 +190,10 @@ async def _main_impl():
                                                 "GetRefreshToken", "CheckLogin", "sms_login"))
     cdp = await ctx.new_cdp_session(page)
 
-    # ── 阶段0: 浏览器养fp(零交互, 全程抓包只观察) ──
+    # ── 浏览器交互与请求流程的诊断步骤 ──
     pr("[P0] 打开授权页养fp(零交互)...")
     context = lib.LoginContext(args.variant, 0)
-    
+    # context 落盘（PKCE code_verifier 是私有的，P6 换证必需；异常退出后仍需保留上下文）。
     try:
         (DATA_DIR / "http-trace" / f"{RUN_ID}-context.json").write_text(
             json.dumps(context.to_json(), ensure_ascii=False, indent=1), encoding="utf-8")
@@ -251,7 +253,7 @@ async def _main_impl():
     if not conf:
         pr("[X] P1 未拿到 1105 挑战 — 停")
         await ctx.close(); return 1
-    
+    # #1「重发请求缺少挑战指纹会再次得到 1105」{意图：使用 P1 返回的挑战 fp 贯穿滑块和重发；依据：请求链路验证。}
     fp = str(conf.get("fp") or fp)
     pr(f"[P1] ★ 1105: fp={fp[:26]}...")
 
@@ -259,7 +261,7 @@ async def _main_impl():
     # SDK滑块只在页面点"获取验证码"后出现 — 纯HTTP版用 page.evaluate 触发SDK自身的发送
     # (这不是填表: 手机号已由P1的HTTP发过, 这里只是让SDK把滑块渲染出来)
     pr("[P2] 触发SDK滑块渲染(通过页面SDK API)...")
-    
+    # 接线约束：solve_slider 的哨兵读取 stage1.netlog/verdicts，
     # 必须挂本页监听喂它, 否则 verify 200 到了判定器也看不见
     import stage1_browser_captcha as s1
     s1.netlog = s1net = []
@@ -284,14 +286,13 @@ async def _main_impl():
         asyncio.ensure_future(cap())
     page.on("response", s1_on_response)
 
-    
-    
-    # 已彻底移除, 不留注释尸体 — P1 纯HTTP send_code + P2b 真实URL模板滑块完全替代其功能。
+    # 浏览器仅负责滑块交互；手机号、协议和验证码请求走 HTTP。
+    # 页面填表路径已移除，由 P1 的 send_code 和滑块模板流程替代。
 
     # ── P2-b: 真实URL模板拼滑块页, SDK自渲染 ──
     pr("[P2b] 拼真实模板滑块URL(SDK自渲染)...")
     from urllib.parse import quote
-    # 真实 env: 屏幕用固定真实值(1920x1080), browser/page 用本窗口实测尺寸 — 全部来自 evaluate
+    # 浏览器环境参数取自当前页面 evaluate 结果，异常时使用兼容默认值。
     env_js = await page.evaluate(
         "() => JSON.stringify({"
         "screen: {w: window.screen.width, h: window.screen.height},"
@@ -398,7 +399,7 @@ async def _main_impl():
     if not sms_code:
         pr("[X] 收码失败")
         await ctx.close(); return 1
-    
+    # 页内 fetch：复用浏览器 cookie 和 fp 链，保持页面上下文一致。
     pr("[P4] 页内 fetch sms_login(授权页上下文)...")
     hz._record("sms_login_requested", phone=phone, state="running")
     try:
@@ -429,7 +430,7 @@ async def _main_impl():
     login_cookies = {c["name"]: c["value"] for c in cookies}
     pr(f"[P4] ★ 登录cookie在浏览器jar里: {len(cookies)}个(含sessionid={('sessionid' in login_cookies)})")
 
-    
+    # ── 阶段4.5: cloudide Login — 设置 X-Cloudide-Session ──
     # 样例: POST api.trae.cn/cloudide/api/v3/trae/Login?type=sms&msToken=<页面msToken>&a_bogus=...
     # body: {UtmSource:"",...,LoginChannel:"native_ide",LoginPlatform:"solo"}
     # msToken 从页面 window 取(byted_acrawler/webmssdk 惯例); a_bogus 由页内 SDK 生成
@@ -473,7 +474,7 @@ async def _main_impl():
     login_cookies = {c["name"]: c["value"] for c in cookies}
 
     # ── 阶段5: 页内 fetch GetPCAuthCode（复用当前页面上下文） → ExchangeToken → 导出 ──
-    
+    # 页面上下文会携带 X-Cloudide-Session；裸 HTTP 请求可能缺少页面凭据。
     # 样例的请求头只有 referer+content-type(无特殊头), 差异在"请求来自页面"(同源凭证链)
     # → 改页内 fetch: credentials:include 自动带全部 cookie + 页面上下文
     pr("[P5] 页内 fetch GetPCAuthCode...")
@@ -504,7 +505,7 @@ async def _main_impl():
             pass
     except Exception as e:
         pr(f"[P5] 页内GetPCAuthCode异常: {str(e)[:130]}")
-    
+    # 前置：api.trae.cn 需要 X-Cloudide-Session cookie，
     # 它由授权页JS调 CheckLogin 后种下 — 注入登录cookie后静开一次授权页收集之
     pr("[P5a] 注入cookie → 静开授权页收集 X-Cloudide-Session...")
     add = [{"name": k, "value": v, "domain": ".trae.cn", "path": "/"}

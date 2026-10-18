@@ -218,7 +218,9 @@ class RegistrationEngine:
         base = self.runs / task["run_id"]
         progress, code = base.with_suffix(".progress.json"), base.with_suffix(".code")
         logfile = base.with_suffix(".log")
-        cfg = self.config()
+        cfg = {**self.config(), **task.get("run_options", {})}
+        # {意图：项目、渠道和单价随任务固定，排队期间修改全局配置不改变已触发任务。}
+        task["sms_unit_price"] = cfg.get("sms_unit_price", 1.1)
         env = {**os.environ, "TRAE_PROGRESS_FILE": str(progress), "TRAE_CODE_FILE": str(code),
                "TRAE_RUN_OPTIONS": json.dumps(cfg), "TRAE_PROFILE_TAG": task["run_id"],
                "TRAE_RUN_ID": task["run_id"], "TRAE_ATTEMPT_ID": task["attempt_id"],
@@ -289,6 +291,9 @@ class RegistrationEngine:
                     details = await self.protection.after_exit(task, interrupted=cancelled or timed_out,
                                                                spawned=spawned)
                     task.update(details)
+                    task.setdefault("budget_attempts", {})[task["attempt_id"]] = {
+                        "estimated": details.get("estimated_cost", 0),
+                        "uncertain": details.get("uncertain_cost", 0)}
                     if details.get("held"):
                         self.pause("遗留号码尚未完成清理，暂停派发")
                 except Exception as error:

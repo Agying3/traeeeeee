@@ -26,7 +26,7 @@ from registration_proxy_pool import RegistrationProxyPool
 PROGRAM_DIR = Path(__file__).resolve().parents[1]
 MANAGED = bool(os.environ.get("TRAE_DATA_DIR"))
 TOOLS = PROGRAM_DIR / "tools"
-CRED_DIR = runtime.CRED_DIR if MANAGED else ROOT / "tmp" / "register-credentials"
+CRED_DIR = runtime.CRED_DIR
 CONFIG = runtime.CONFIG_DIR / "webui.json" if MANAGED else Path(__file__).parent / "config.json"
 GW = os.environ.get("A2A_BASE_URL", "http://127.0.0.1:3065").rstrip("/")
 UPSTREAM_API_KEY = os.environ.get("TRAE_UPSTREAM_API_KEY", "").strip()
@@ -385,7 +385,9 @@ async def _start_watchdog():
             ENGINE.pause("启动恢复待重试: " + type(error).__name__)
     BACKGROUND_TASKS.extend([asyncio.create_task(watchdog()),
                              asyncio.create_task(continuous_loop()),
-                             asyncio.create_task(haozhu_keepalive())])
+                             asyncio.create_task(haozhu_keepalive()),
+                             asyncio.create_task(channel_watch_loop())])
+    GATEWAY_OPS.start()
     log("注册机服务就绪")
 
 
@@ -394,6 +396,8 @@ async def _shutdown_program():
     for task in BACKGROUND_TASKS:
         task.cancel()
     await asyncio.gather(*BACKGROUND_TASKS, return_exceptions=True)
+    await GATEWAY_OPS.stop()
+    await UPSTREAM.close()
     await engine_stop()
     queue_save()
     cont_save()
@@ -537,7 +541,11 @@ async def _continuous_tick(c: dict):
 async def continuous_get():
     c = load_config().get("continuous", {})
     active = sum(1 for t in state["queue"] if t["status"] in ("pending", "running", "waiting_code"))
-    return {"config": c, "added_today": cont["added"], "date": cont["date"],
+    today = time.strftime("%Y-%m-%d")
+    todays = [t for t in state["queue"] if time.strftime("%Y-%m-%d", time.localtime(t.get("added", 0))) == today]
+    return {"config": c, "added_today": cont["added"], "dispatched_today": cont["added"],
+            "registered_today": sum(t.get("status") == "ok" for t in todays),
+            "imported_today": sum(t.get("gateway_imported", False) for t in todays), "date": cont["date"],
             "paused": cont["paused"], "balance": cont["balance"],
             "queue_active": active, "proxy_total": _proxy_total(),
             "proxy_available": _proxy_available(),
@@ -592,8 +600,95 @@ async def metrics(window_h: int = 24):
             "avg_s": round(sum(took) / len(took), 1) if took else None,
             "stage_fail": proxy_fail, "proxy_ok": proxy_ok}
 
-    asyncio.get_event_loop().create_task(worker())
-    return {"ok": True}
+
+@app.get("/api/dashboard")
+async def dashboard(window_h: int = 0):
+    """仪表盘聚合：只用本机真实数据（注册队列 + 队列内时间戳）分桶，不依赖外部服务。
+
+    window_h=0 表示不限时间窗（默认），因为队列里的历史任务可能早于 24 小时，
+    窗口太小会让仪表盘全空。
+    """
+    now = time.time()
+    since = 0 if window_h <= 0 else now - window_h * 3600
+    tasks = [t for t in state["queue"] if float(t.get("added", 0) or 0) >= since]
+
+    def bucket_of(task):
+        status = task.get("status")
+        if status == "ok":
+            return "ok"
+        if status in ("fail", "reconciliation_unknown"):
+            return "fail"
+        return "active"
+
+    proxies = {}
+    stages = {}
+    for task in tasks:
+        kind = bucket_of(task)
+        key = "auto" if task.get("proxy") is None else str(task.get("proxy"))
+        proxy = proxies.setdefault(key, {"ok": 0, "fail": 0, "active": 0})
+        proxy[kind] += 1
+        if kind == "fail":
+            name = str(task.get("stage") or "未知阶段")
+            stages[name] = stages.get(name, 0) + 1
+
+    trend = []
+    stamps = [float(t.get("added", 0) or 0) for t in tasks if float(t.get("added", 0) or 0) > 0]
+    span = (max(stamps) - min(stamps)) if stamps else 0
+    if span <= 2 * 3600:
+        step, label = 600, "10 分钟"
+    elif span <= 2 * 86400:
+        step, label = 3600, "小时"
+    elif span <= 30 * 86400:
+        step, label = 86400, "天"
+    else:
+        step, label = 7 * 86400, "周"
+    if stamps:
+        first, last = int(min(stamps) // step) * step, int(max(stamps) // step) * step
+        slots_all = {}
+        for task in tasks:
+            at = float(task.get("added", 0) or 0)
+            if at <= 0:
+                continue
+            key = int(at // step) * step
+            slot = slots_all.setdefault(key, {"ok": 0, "fail": 0, "active": 0})
+            slot[bucket_of(task)] += 1
+        # 空洞补零，折线才连续；上限 120 个点避免超长窗口撑爆响应。
+        cursor, filled = first, []
+        while cursor <= last and len(filled) < 120:
+            filled.append(cursor)
+            cursor += step
+        for at in filled:
+            slot = slots_all.get(at, {"ok": 0, "fail": 0, "active": 0})
+            settled = slot["ok"] + slot["fail"]
+            trend.append({"at": at, "ok": slot["ok"], "fail": slot["fail"], "active": slot["active"],
+                          "total": slot["ok"] + slot["fail"] + slot["active"],
+                          "rate": round(100 * slot["ok"] / settled) if settled else None})
+
+    ok = sum(1 for t in tasks if bucket_of(t) == "ok")
+    fail = sum(1 for t in tasks if bucket_of(t) == "fail")
+    active = sum(1 for t in tasks if bucket_of(t) == "active")
+    settled = ok + fail
+    proxy_rows = []
+    for key, value in proxies.items():
+        decided = value["ok"] + value["fail"]
+        proxy_rows.append({"proxy": key, "ok": value["ok"], "fail": value["fail"],
+                           "active": value["active"],
+                           "rate": round(100 * value["ok"] / decided) if decided else None})
+    proxy_rows.sort(key=lambda row: (-(row["ok"] + row["fail"]), row["proxy"]))
+    return {"window_h": window_h, "generated_at": now, "queued_total": len(state["queue"]),
+            "bucket_seconds": step, "bucket_label": label,
+            "cards": {"tasks": len(tasks), "ok": ok, "fail": fail, "active": active,
+                      "rate": round(100 * ok / settled) if settled else None,
+                      "creds": len(list(CRED_DIR.glob("*.json"))),
+                      "waiting_code": sum(1 for t in tasks if t.get("status") == "waiting_code"),
+                      "retried": sum(1 for t in tasks if int(t.get("retries", 0) or 0) > 0),
+                      # 累计口径与豪猪页一致，避免两处数字对不上被当成 bug。
+                      "lifetime_ok": state["done"], "lifetime_fail": state["fail"],
+                      "failed_batch": state.get("failure_streaks", {})},
+            "trend": trend,
+            "proxies": proxy_rows[:18],
+            "proxy_total": len(proxy_rows),
+            "stages": dict(sorted(stages.items(), key=lambda item: -item[1])[:8])}
 
 
 @app.post("/api/engine/stop")
@@ -862,11 +957,21 @@ async def creds_import_gw():
 
 
 @app.get("/api/credentials/export")
-async def creds_export():
-    items = _creds()
-    body = json.dumps([json.loads(Path(i["path"]).read_text(encoding="utf-8"))
-                       for i in items], ensure_ascii=False, indent=1)
-    return PlainTextResponse(body, media_type="application/json")
+async def creds_export(format: str = "agent2api"):
+    from credential_export import build_agent2api_export, build_credentials_export
+    if format not in ("agent2api", "nested"):
+        raise HTTPException(422, "导出格式只能为 agent2api 或 nested")
+    builder = build_agent2api_export if format == "agent2api" else build_credentials_export
+    payload = builder(CRED_DIR)
+    if not payload["count"]:
+        raise HTTPException(404, "没有可导出的账号凭证；请检查凭证目录和文件格式")
+    filename = f"trae-{format}-{payload['count']}-{time.strftime('%Y%m%d-%H%M%S')}.json"
+    return PlainTextResponse(
+        json.dumps(payload, ensure_ascii=False, indent=2, allow_nan=False) + "\n",
+        media_type="application/json",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"',
+                 "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff",
+                 "X-Credential-Count": str(payload["count"])})
 
 
 # ── 代理池 ──────────────────────────────────────────────
@@ -925,12 +1030,7 @@ async def proxies_remove(req: ProxyRemove):
 
 # ── 网关 ────────────────────────────────────────────────
 def _gw_login() -> str:
-    body = json.dumps({"username": "admin", "password": ""}).encode()
-    req = urllib.request.Request(GW + "/api/panel/login", data=body,
-                                 headers={"content-type": "application/json"})
-    with urllib.request.urlopen(req, timeout=5) as r:
-        d = json.loads(r.read().decode())
-    return (d.get("data") or {}).get("accessToken") or ""
+    return GATEWAY_OPS.client.login()
 
 
 @app.get("/api/gateway/state")
@@ -965,86 +1065,10 @@ async def gateway_start():
     return {"ok": r.returncode == 0, "out": out}
 
 
-@app.get("/v1/models")
-async def openai_models(request: Request):
-    _check_upstream_key(request)
-    return await asyncio.to_thread(_gw_json, "GET", "/v1/models")
-
-
-@app.post("/v1/chat/completions")
-async def openai_chat(request: Request):
-    _check_upstream_key(request)
-    body = await request.json()
-    if not isinstance(body, dict):
-        raise HTTPException(400, "请求体必须是 JSON 对象")
-    if body.get("stream") is True:
-        return StreamingResponse(_gw_stream("/v1/chat/completions", body), media_type="text/event-stream",
-                                 headers={"cache-control": "no-cache"})
-    return await _relay_json("/v1/chat/completions", body)
-
-
-async def _relay_json(path: str, body: dict):
-    try:
-        result = await asyncio.to_thread(_gw_json, "POST", path, body)
-        record_upstream(True, body.get("model", ""))
-        return JSONResponse(result)
-    except HTTPException:
-        record_upstream(False, body.get("model", ""))
-        raise
-
-
-
-@app.post("/v1/responses")
-async def openai_responses(request: Request):
-    _check_upstream_key(request)
-    body = await request.json()
-    if not isinstance(body, dict):
-        raise HTTPException(400, "请求体必须是 JSON 对象")
-    if body.get("stream") is True:
-        return StreamingResponse(_gw_stream("/v1/responses", body), media_type="text/event-stream",
-                                 headers={"cache-control": "no-cache"})
-    return await _relay_json("/v1/responses", body)
-
-
-def _check_upstream_key(request: Request):
-    expected = UPSTREAM_API_KEY or str(load_config().get("upstream_api_key", "")).strip()
-    if not expected:
-        raise HTTPException(503, "请先在工作台配置上游 API Key")
-    if request.headers.get("authorization", "") != "Bearer " + expected:
-        raise HTTPException(401, "上游 API Key 无效")
-
-
-def _gw_stream(path: str, body: dict):
-    data = json.dumps(body).encode()
-    req = urllib.request.Request(GW + path, data=data, method="POST",
-                                 headers={"content-type": "application/json"})
-    ok = False
-    try:
-        with urllib.request.urlopen(req, timeout=120) as response:
-            while chunk := response.read(16384):
-                yield chunk
-        ok = True
-    except urllib.error.HTTPError as error:
-        detail = error.read().decode("utf-8", "replace")
-        yield ("data: " + json.dumps({"error": {"message": detail[:1000]}}, ensure_ascii=False) + "\\n\\n").encode()
-    except OSError as error:
-        yield ("data: " + json.dumps({"error": {"message": "Agent2API 网关不可用: " + str(error)}}, ensure_ascii=False) + "\\n\\n").encode()
-    finally:
-        record_upstream(ok, body.get("model", ""))
-
-
-def _gw_json(method: str, path: str, body: dict | None = None):
-    data = json.dumps(body).encode() if body is not None else None
-    req = urllib.request.Request(GW + path, data=data, method=method,
-                                 headers={"content-type": "application/json"})
-    try:
-        with urllib.request.urlopen(req, timeout=120) as response:
-            return json.loads(response.read().decode("utf-8"))
-    except urllib.error.HTTPError as error:
-        detail = error.read().decode("utf-8", "replace")
-        raise HTTPException(error.code, detail[:1000])
-    except OSError as error:
-        raise HTTPException(503, "Agent2API 网关不可用: " + str(error))
+# {意图：原本地直连转发（openai_models/openai_chat/openai_responses 与 _gw_json/_gw_stream）
+# 已由 UpstreamService 取代（密钥策略、模型白名单、请求日志、增量流式）。
+# 这里不再保留第二套 /v1 实现：它会重复注册同名路由，且其 SSE 错误帧曾用字面 "\\n\\n"
+# 而不是真换行，客户端会解析失败。}
 
 
 
@@ -1136,8 +1160,133 @@ async def program_stop(request: Request):
 
 @app.get("/")
 async def index():
-    return FileResponse(Path(__file__).parent / "index.html")
+    # {意图：仪表盘界面改版频繁，禁用缓存避免操作员看到旧版页面。}
+    return FileResponse(Path(__file__).parent / "index.html", headers={"cache-control": "no-store"})
 
+
+from channel_watcher import ChannelWatcher, ChannelConfigError
+from gateway_operations import GatewayOperations, GatewayError
+from upstream_service import UpstreamService
+
+WATCH_FILE = runtime.STATE_DIR / "channel-watch.json"
+
+def _watch_config():
+    return {"enabled": False, "projects": [], "interval": 300, "per_trigger": 1,
+            "workers": 1, "cooldown": 86400, **load_config().get("channel_watch", {})}
+
+async def _watch_fetch(project):
+    catalog = _hz_catalog_module().get_client()
+    def fetch():
+        with catalog.lock:
+            catalog.cache = {key: value for key, value in catalog.cache.items() if key[0] != 8}
+            return catalog.channels(project["hex_sid"])
+    return await asyncio.to_thread(fetch)
+
+async def _watch_dispatch(candidate, project):
+    if not _watch_config()["enabled"] or os.environ.get("TRAE_REGISTRATION_DISABLED") == "1" or state.get("halted"):
+        raise ValueError("监控派发已暂停")
+    if not _proxy_available():
+        raise ValueError("等待可用注册代理")
+    await _catalog_call("add_uid", candidate["uid"])
+    count = _watch_config()["per_trigger"]
+    event_id = project["run_options"]["watch_event_id"]
+    existing = [t["id"] for t in state["queue"] if t.get("watch_event_id") == event_id]
+    if existing:
+        return existing
+    tasks = []
+    for _ in range(count):
+        task = {"id": uuid.uuid4().hex, "phone": "", "proxy": None, "proxy_mode": "auto",
+                "stage": "pending", "status": "pending", "cred": False, "added": time.time(),
+                "source": "channel_watcher", "watch_event_id": event_id,
+                "run_options": {"sid": project["sid"], "uid": candidate["uid"],
+                                "uids": [candidate["uid"]], "sms_unit_price": candidate["price"]}}
+        tasks.append(task)
+    # {意图：派发先持久化，监控重启用事件 ID 找回任务，避免同一触发重复取号。}
+    state["queue"].extend(tasks)
+    queue_save()
+    if not state["running"]:
+        await engine_start()
+    return [t["id"] for t in tasks]
+
+def _watch_task(task_id):
+    task = next((t for t in state["queue"] if t.get("id") == task_id), None)
+    if task is None:
+        return None
+    status = "success" if task["status"] == "ok" else "failed" if task["status"] == "fail" else task["status"]
+    costs = task.get("budget_attempts", {})
+    return {"status": status, "received_cost": sum(v.get("estimated", 0) for v in costs.values()),
+            "uncertain_cost": sum(v.get("uncertain", 0) for v in costs.values())}
+
+try:
+    _watch_state = json.loads(WATCH_FILE.read_text(encoding="utf-8"))
+except (OSError, ValueError):
+    _watch_state = {}
+WATCHER = ChannelWatcher(_watch_fetch, _watch_dispatch, _watch_task, state=_watch_state,
+    persist=lambda value: runtime.atomic_json(WATCH_FILE, value),
+    registration_enabled=lambda: _watch_config()["enabled"] and os.environ.get("TRAE_REGISTRATION_DISABLED") != "1",
+    engine_halted=lambda: state.get("halted", False))
+WATCHER.configure(_watch_config())
+
+async def channel_watch_loop():
+    last_tick = 0
+    while True:
+        try:
+            if time.monotonic() - last_tick >= _watch_config()["interval"]:
+                await WATCHER.tick()
+                last_tick = time.monotonic()
+        except Exception as error:
+            log("渠道监控本轮失败: " + type(error).__name__)
+            last_tick = time.monotonic()
+        await asyncio.sleep(2)
+
+@app.get("/api/watch")
+async def watch_get():
+    paused = "离线维护模式，自动派发暂停" if os.environ.get("TRAE_REGISTRATION_DISABLED") == "1" else state.get("stop_reason", "") if state.get("halted") else ""
+    return {"config": _watch_config(), "state": WATCHER.snapshot(), "paused": paused}
+
+@app.put("/api/watch")
+async def watch_put(request: Request):
+    raw = await request.json()
+    if not isinstance(raw, dict):
+        raise HTTPException(400, "规则必须是 JSON 对象")
+    raw["cooldown"] = raw.get("cooldown_seconds", raw.get("cooldown", 86400))
+    try:
+        clean = WATCHER.validate_config(raw)
+        if not 60 <= clean["interval"] <= 3600 or not 1 <= clean["per_trigger"] <= 10:
+            raise ValueError("轮询间隔为60至3600秒，每次任务数为1至10")
+        clean.update(enabled=bool(raw.get("enabled", False)), cooldown=raw["cooldown"])
+        cfg = load_config(); cfg["channel_watch"] = clean
+        _atomic_write(CONFIG, cfg)
+        WATCHER.configure(clean)
+    except (ValueError, TypeError) as error:
+        raise HTTPException(400, str(error))
+    return await watch_get()
+
+@app.post("/api/watch/tick")
+async def watch_tick():
+    await WATCHER.tick()
+    return await watch_get()
+
+GATEWAY_OPS = GatewayOperations(runtime.STATE_DIR, lambda: CRED_DIR.glob("*.json"),
+                               base_url=GW, config=load_config().get("gateway_operations", {}))
+app.include_router(GATEWAY_OPS.router())
+
+@app.exception_handler(GatewayError)
+async def gateway_operation_error(request: Request, error: GatewayError):
+    return JSONResponse({"detail": "网关操作失败，请检查3065服务或输入参数", "gateway_status": error.status}, status_code=error.status)
+
+UPSTREAM = UpstreamService(GW, config_getter=load_config,
+    master_key_getter=lambda: UPSTREAM_API_KEY or str(load_config().get("upstream_api_key", "")),
+    stats_callback=lambda values: record_upstream(200 <= values[4] < 400, values[2]),
+    db_path=runtime.STATE_DIR / "upstream.sqlite3")
+# {意图：仅保留一个兼容协议入口，避免旧路由抢先匹配而跳过模型策略。}
+app.router.routes[:] = [route for route in app.router.routes if getattr(route, "path", "") not in
+                       ("/v1/models", "/v1/chat/completions", "/v1/responses")]
+app.include_router(UPSTREAM.router)
+
+@app.get("/operations.js")
+async def operations_script():
+    return FileResponse(Path(__file__).parent / "operations.js", media_type="text/javascript", headers={"cache-control": "no-store"})
 
 if __name__ == "__main__":
     import uvicorn

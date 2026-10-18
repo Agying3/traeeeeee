@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Trae注册机</title>
 <style>
-  /* 主题变量与选择器映射。 */
+  /* ═══ 主题变量映射：只做选择器映射，不改变页面结构 ═══ */
   :root {
     /* 外挂原文变量(styles.css L1-16) */
     --luoyv-font: Inter, "HarmonyOS Sans SC", "Microsoft YaHei", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -132,7 +132,33 @@
             border-radius:8px; padding:12px 14px; }
   .metric small { color:var(--muted); }
   .metric b { display:block; font-size:22px; margin-top:2px; }
-  .metric b.ok { color: var(--luoyv-brand-strong); } .metric b.err { color:var(--err); }
+  .metric b, .metric b.ok, .metric b.err,
+  .metric b.info, .metric b.warn { color:#273449; }
+  .metric small { color:#58667a; }
+  #work .trend-value { color:#273449; }
+  #work .bubble { color:#475569; }
+  #work .bubble b { color:#273449; font-weight:600; }
+  #work .tag.ok { color:#356657; background:#edf5f1; }
+  #work .tag.bad { color:#895157; background:#f8eff0; }
+  #work .tag.wait { color:#7b684a; background:#f6f2e9; }
+  #work .tag.run { color:#4e6380; background:#eef2f7; }
+  /* 趋势图与代理气泡（对齐 wk console 的 sparkline / trend 卡） */
+  .trend-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:22px; }
+  .trend-layout { display:flex; align-items:center; justify-content:space-between; gap:20px; }
+  .trend-value { color:#172033; font-size:32px; font-weight:700; line-height:1.1; font-variant-numeric:tabular-nums; margin-block:4px; }
+  .trend-note { color:var(--muted); font-size:12px; }
+  .spark-holder { flex:0 0 auto; }
+  .sparkline { display:block; width:min(100%,240px); min-width:170px; overflow:visible; }
+  .bubble-grid { display:flex; flex-wrap:wrap; gap:10px; }
+  .bubble { display:inline-flex; align-items:center; gap:7px; padding:7px 12px; border-radius:999px;
+            border:1px solid rgb(148 163 184 / .32); background:#fff; font-size:12px; font-variant-numeric:tabular-nums; }
+  .bubble i { display:inline-block; width:10px; height:10px; border-radius:50%; }
+  .bubble span { color:var(--muted); }
+  @media (max-width: 760px) {
+    .trend-grid { grid-template-columns:1fr; }
+    .trend-layout { align-items:flex-start; flex-direction:column; }
+    .sparkline { width:100%; min-width:0; }
+  }
   .row { display:flex; gap:10px; align-items:end; } .row > * { flex:1; }
   .row button { flex:0 0 auto; }
   table { width:100%; border-collapse:collapse; }
@@ -298,28 +324,63 @@
 <div class="app">
   <aside>
     <strong>Trae注册机</strong>
-    <button class="on" data-page="work">工作台</button>
+    <button class="on" data-page="work">仪表盘</button>
     <button data-page="haozhu">豪猪接码</button>
     <button data-page="accounts">凭证库</button>
     <button data-page="proxy-page">代理池</button>
     <button data-page="metrics-page">指标</button>
     <button data-page="gateway">网关</button>
+    <button data-page="market-watch">渠道监控</button>
+    <button data-page="operations">号池运营</button>
+    <button data-page="api-access">调用密钥与日志</button>
     <button data-page="settings">设置</button>
     <button data-page="logs-page">日志</button>
   </aside>
   <main>
 
-  <!-- ── 工作台 ─────────────────────────────────────── -->
+  <!-- ── 仪表盘 ─────────────────────────────────────── -->
   <section class="page on" id="work">
-    <h1>工作台</h1>
-    <p class="lead">注册队列：豪猪取号 → 养fp → 发码 → 滑块 → 收码 → 登录换证 → 凭证入库</p>
+    <h1>仪表盘</h1>
+    <p class="lead">注册队列 · 号池上游 · 渠道监控 · 凭证入池，一屏总览</p>
     <div class="metrics-row" id="work-metrics"></div>
+    <div class="card trend-card">
+      <h2>性能趋势</h2>
+      <div class="trend-grid">
+        <div class="trend-layout">
+          <div>
+            <small class="trend-note">注册成功率</small>
+            <div class="trend-value" id="trend-rate">—</div>
+            <small class="trend-note" id="trend-rate-note">按小时分桶</small>
+          </div>
+          <div class="spark-holder" id="trend-rate-spark"></div>
+        </div>
+        <div class="trend-layout">
+          <div>
+            <small class="trend-note">处理量</small>
+            <div class="trend-value" id="trend-vol">—</div>
+            <small class="trend-note" id="trend-vol-note">每小时任务数</small>
+          </div>
+          <div class="spark-holder" id="trend-vol-spark"></div>
+        </div>
+      </div>
+    </div>
     <div class="grid cols-2">
       <div class="card"><h2>号池与上游</h2><div id="upstream-state" style="color:var(--muted)">正在读取号池状态…</div>
         <div class="row" style="margin-top:12px;"><input id="upstream-key" type="password" autocomplete="new-password" placeholder="设置中转站 API Key（至少16位）"><button id="btn-upstream-key" class="secondary">保存 Key</button></div>
         <small id="upstream-key-state" style="color:var(--muted)"></small>
       </div>
       <div class="card"><h2>注册引擎</h2><div id="engine-state" style="color:var(--muted)">未启动</div></div>
+    </div>
+    <div class="grid cols-2">
+      <div class="card"><h2>代理健康</h2><div id="proxy-bubbles" class="bubble-grid"><span class="trend-note">正在读取代理数据…</span></div></div>
+      <div class="card"><h2>失败阶段分布</h2><div id="work-fail" class="bubble-grid"><span class="trend-note">暂无数据</span></div></div>
+    </div>
+    <div class="grid cols-2">
+      <div class="card"><h2>渠道监控</h2><div id="work-watch" style="color:var(--muted)">正在读取监控状态…</div></div>
+      <div class="card"><h2>凭证入池</h2><div id="work-ops" style="color:var(--muted)">正在读取入池状态…</div></div>
+    </div>
+    <div class="grid cols-2">
+      <div class="card"><h2>最近失败任务</h2><div id="work-recent" style="color:var(--muted)">暂无数据</div></div>
     </div>
   </section>
 
@@ -476,14 +537,15 @@
   <!-- ── 凭证库 ─────────────────────────────────────── -->
   <section class="page" id="accounts">
     <h1>凭证库</h1>
-    <p class="lead">注册产出的 agent2api 格式凭证</p>
+    <p class="lead">注册账号可一次导出为 Agent2API 批量导入文件</p>
     <div class="metrics-row" id="acc-metrics"></div>
     <div class="card">
       <h2>凭证</h2>
       <div class="row" style="margin-bottom:12px;">
         <button id="btn-acc-import-gw">导入网关(3065)</button>
-        <button id="btn-acc-export" class="secondary">导出JSON</button>
+        <button id="btn-acc-export" class="secondary">导出全部账号（单个JSON）</button>
       </div>
+      <p style="color:var(--muted);font-size:13px;margin-bottom:12px;">Agent2API 原生 accounts 批量格式：包含账号 ID、UID、令牌及完整设备字段。导出不依赖网关；请选择 Agent2API 的“导入账号”文件入口。</p>
       <table>
         <thead><tr>
           <th>手机号</th><th>uid</th><th>有效期</th><th>积分</th><th>状态</th><th>网关</th>
@@ -586,10 +648,50 @@
     <div class="card"><div class="logs" id="logs"></div></div>
   </section>
 
+  <section class="page" id="market-watch">
+    <h1>渠道监控</h1><p class="lead">观察新码、降价、补货与重新上架；触发任务固定项目和渠道，费用以收码证据估算。</p>
+    <div class="metrics-row" id="watch-metrics"></div>
+    <div class="grid cols-2">
+      <div class="card"><h2>值班规则</h2>
+        <div class="row"><label>监控状态<select id="watch-enabled"><option value="0">暂停</option><option value="1">启用</option></select></label><label>轮询秒数<input id="watch-interval" type="number" min="60" max="3600" value="300"></label><label>每次任务数<input id="watch-want" type="number" min="1" max="10" value="1"></label></div>
+        <div class="row" style="margin-top:12px"><label>差渠道冷却（小时）<input id="watch-cooldown" type="number" min="1" value="24"></label><button id="watch-save">保存规则</button><button id="watch-tick" class="secondary">立即检查</button></div>
+        <p id="watch-status" role="status"></p><small style="color:var(--muted)">维护模式和引擎停止会阻止自动派发；保存规则不会解除注册保护。立即检查在启用状态下可能派发任务。</small>
+      </div>
+      <div class="card"><h2>添加监控项目</h2>
+        <div class="row"><label>项目名称<input id="watch-name" placeholder="Trae"></label><label>数字项目 ID<input id="watch-sid" placeholder="58562"></label></div>
+        <label>H5 查询标识<input id="watch-hex" placeholder="从豪猪搜索结果复制，或使用下方按钮"></label>
+        <div class="row" style="margin-top:12px"><label>最高价（¥）<input id="watch-price" type="number" min="0.01" step="0.01" value="1.10"></label><label>最低库存<input id="watch-stock" type="number" min="1" value="1"></label><button id="watch-project-add">加入监控</button></div>
+        <button id="watch-use-project" class="secondary" style="margin-top:12px">填入豪猪页当前项目</button>
+      </div>
+    </div>
+    <div class="card" style="margin-top:16px"><h2>项目与渠道质量</h2><div class="queue-scroll"><table><thead><tr><th>项目</th><th>ID</th><th>最高价</th><th>最低库存</th><th>状态</th><th>操作</th></tr></thead><tbody id="watch-projects"></tbody></table></div><div id="watch-quality"></div></div>
+    <div class="card" style="margin-top:16px"><h2>触发成果</h2><div class="row"><input id="watch-search" placeholder="筛选项目、渠道或事件"><button id="watch-refresh" class="secondary">刷新</button></div><div class="queue-scroll"><table><thead><tr><th>时间</th><th>项目 / 渠道</th><th>事件</th><th>任务</th><th>成功</th><th>收码估算 / 未决</th><th>状态</th></tr></thead><tbody id="watch-events"></tbody></table></div></div>
+  </section>
+  <section class="page" id="operations">
+    <h1>号池运营</h1><p class="lead">注册凭证自动入池、失败独立重试；管理模型调用账号和请求出口。</p>
+    <div class="metrics-row" id="ops-metrics"></div>
+    <div class="grid cols-2">
+      <div class="card"><h2>自动入池与维护</h2><div class="row"><label>自动导入<select id="ops-import"><option value="1">启用</option><option value="0">暂停</option></select></label><label>定时维护<select id="ops-maintenance"><option value="0">暂停</option><option value="1">启用</option></select></label><label>维护间隔（秒）<input id="ops-interval" type="number" min="300" value="3600"></label></div><div class="row" style="margin-top:12px"><button id="ops-save">保存</button><button id="ops-sync" class="secondary">检查待入池</button><button id="ops-maintain" class="secondary">执行维护</button></div><p id="ops-status" role="status"></p></div>
+      <div class="card"><h2>请求出口代理</h2><p style="color:var(--muted)">此处管理模型调用出口；豪猪注册代理在「代理池」页单独管理。</p><div class="row"><input id="ops-proxy-url" placeholder="http://host:port 或 socks5://host:port"><button id="ops-proxy-add">添加请求代理</button></div><div id="ops-proxy-status" style="margin-top:12px"></div></div>
+    </div>
+    <div class="card" style="margin-top:16px"><h2>账号池</h2><div class="row"><input id="ops-search" placeholder="筛选账号、状态、提供商"><button id="ops-refresh" class="secondary">刷新</button></div><div class="queue-scroll"><table><thead><tr><th>账号</th><th>提供商</th><th>状态</th><th>操作</th></tr></thead><tbody id="ops-accounts"></tbody></table></div></div>
+    <div class="card" style="margin-top:16px"><h2>入池任务</h2><div id="ops-outbox"></div></div>
+  </section>
+  <section class="page" id="api-access">
+    <h1>调用密钥与日志</h1><p class="lead">独立调用密钥、模型分组策略与请求指标；日志保留调用元数据。</p>
+    <div class="card"><div class="row"><label>管理 Key<input id="access-master" type="password" autocomplete="off" placeholder="输入工作台设置的上游 Key，仅保留在当前页面内存"></label><button id="access-unlock">读取管理数据</button></div><p id="access-status" role="status"></p></div>
+    <div class="grid cols-2" style="margin-top:16px">
+      <div class="card"><h2>创建调用密钥</h2><label>名称<input id="access-name" placeholder="NewAPI 主渠道"></label><label>模型策略分组<input id="access-group" placeholder="留空使用默认策略"></label><label>允许模型（逗号分隔，留空不限）<input id="access-models" placeholder="model-a,model-b"></label><label>有效天数（0为长期）<input id="access-days" type="number" min="0" value="0"></label><button id="access-create" style="margin-top:12px">创建密钥</button><p id="access-secret" style="overflow-wrap:anywhere" role="status"></p></div>
+      <div class="card"><h2>模型策略分组</h2><label>分组名称<input id="access-group-name" placeholder="coding"></label><label>允许模型（逗号分隔，留空不限）<input id="access-group-models"></label><button id="access-group-save" style="margin-top:12px">保存分组</button><div id="access-groups" style="margin-top:12px"></div><small style="color:var(--muted)">此分组约束可调用模型；账号选择由 Agent2API 负责。</small></div>
+    </div>
+    <div class="card" style="margin-top:16px"><h2>调用密钥</h2><div class="queue-scroll"><table><thead><tr><th>名称</th><th>标识</th><th>分组 / 模型</th><th>状态</th><th>操作</th></tr></thead><tbody id="access-keys"></tbody></table></div></div>
+    <div class="card" style="margin-top:16px"><h2>请求日志</h2><div class="row"><input id="access-log-filter" placeholder="筛选模型、端点、状态或密钥"><button id="access-refresh" class="secondary">刷新</button></div><div class="queue-scroll"><table><thead><tr><th>时间</th><th>模型 / 密钥</th><th>端点</th><th>状态</th><th>TTFB / 耗时</th><th>Token</th><th>错误</th></tr></thead><tbody id="access-requests"></tbody></table></div></div>
+  </section>
   </main>
 </div>
 <div id="toast"></div>
 <div id="selection-highlight" aria-hidden="true"></div>
+<script src="/operations.js"></script>
 <script>
 const $ = (id) => document.getElementById(id);
 const API = location.origin + '/api';
@@ -656,6 +758,22 @@ async function api(path, opts) {
 function metric(el, items) {
   el.innerHTML = items.map(([k, v, cls], i) =>
     `<div class="metric" style="--metric-count:${items.length};--metric-position:${i * 100 / Math.max(1, items.length - 1)}%"><small>${esc(k)}</small><b class="${esc(cls||'')}">${esc(v)}</b></div>`).join('');
+}
+/* 迷你趋势折线：对齐 wk console 的 Sparkline（220x52 折线，单点时画圆点）。 */
+function sparkline(values, color = '#356ae6', ariaLabel = '趋势图') {
+  const series = (values || []).filter(v => typeof v === 'number' && Number.isFinite(v));
+  if (!series.length) return '<span class="trend-note">等待采样</span>';
+  const width = 240, height = 52;
+  const min = Math.min(...series), max = Math.max(...series), span = (max - min) || 1;
+  const point = (value, index) => {
+    const x = series.length === 1 ? width / 2 : (index / (series.length - 1)) * width;
+    const y = height - ((value - min) / span) * (height - 8) - 4;
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  };
+  const points = series.map(point).join(' ');
+  const dot = series.length === 1 ? `<circle cx="${point(series[0], 0).split(',')[0]}" cy="${point(series[0], 0).split(',')[1]}" r="3.5" fill="${color}"/>` : '';
+  return `<svg class="sparkline" viewBox="0 0 ${width} ${height}" role="img" aria-label="${esc(ariaLabel)}">` +
+         `<polyline fill="none" stroke="${color}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" points="${points}"/>${dot}</svg>`;
 }
 
 /* ── 导航 ── */
@@ -783,72 +901,129 @@ document.querySelectorAll('[data-queue-sort]').forEach(button => button.onclick 
 document.querySelectorAll('[data-queue-filter]').forEach(button => button.onclick = event => { event.stopPropagation(); openQueueFilter(button.dataset.queueFilter,button); });
 document.addEventListener('click', event => { if (!event.target.closest('#queue-filter-menu') && !event.target.closest('[data-queue-filter]')) { $('queue-filter-menu').hidden = true; queueFilterAnchor = null; } });
 
-async function loadWork() {
-  if (document.activeElement?.matches('#queue-body input') || !$('queue-filter-menu').hidden) return;
-  try {
-    const s = await api('/engine/state');
-    const q = s.queue || [];
-    metric($('work-metrics'), [
-      ['队列', q.length], ['进行中', q.filter(t => t.status === 'running').length],
-      ['成功', s.done || 0, 'ok'], ['失败', s.fail || 0, 'err'],
-      ['成功率', s.done + s.fail ? Math.round(100 * s.done / (s.done + s.fail)) + '%' : '—'],
-      ['凭证', s.creds || 0, 'ok'],
-    ]);
-    const engineText = (s.running ? '运行中' : '已停止') + ` · 本批成功 ${s.batch_ok || 0} / 尝试 ${s.batch_attempts || 0}` + (s.stop_reason ? ' · ' + s.stop_reason : '');
-    if ($('engine-state')) $('engine-state').textContent = engineText;
-    if ($('hz-engine-state')) $('hz-engine-state').textContent = engineText;
-    try {
-      const g = await api('/gateway/state');
-      const u = await api('/upstream/stats');
-      $('upstream-state').innerHTML = `${g.alive ? '<span class="tag ok">在线</span>' : '<span class="tag bad">离线</span>'} · 号池账号 ${g.accounts} · 可用模型 ${g.models}<br><small style="color:var(--muted)">OpenAI 上游：/v1 · 调用 ${u.requests}（成功 ${u.success} / 失败 ${u.failed}）</small>`;
-    } catch { $('upstream-state').textContent = '号池状态读取失败'; }
-    const tb = $('queue-body');
-    if (!tb) return;
-    queueData = q;
-     renderQueueRows();
-     return;
-     const mode = 'added-desc';
-    const statusRank = {running:0, waiting_code:1, fail:2, reconciliation_unknown:3, pending:4, ok:5};
-    const rows = q.map((task, index) => ({task, index}));
-    rows.sort((a, b) => {
-      let result = 0;
-      if (mode === 'added-desc') result = (b.task.added || 0) - (a.task.added || 0);
-      else if (mode === 'added-asc') result = (a.task.added || 0) - (b.task.added || 0);
-      else if (mode === 'status') result = (statusRank[a.task.status] ?? 9) - (statusRank[b.task.status] ?? 9);
-      else if (mode === 'proxy') result = (Number(a.task.proxy) || 0) - (Number(b.task.proxy) || 0);
-      else if (mode === 'phone') result = String(a.task.phone || '').localeCompare(String(b.task.phone || ''));
-      return result || a.index - b.index;
+const workRequests = new Map();
+let workEngine = null, workDashboard = null, workGateway = null, workUpstream = null;
+
+function renderWorkMetrics() {
+  if (!$('work-metrics')) return;
+  const s = workEngine || {}, q = s.queue || [], c = workDashboard?.cards || {};
+  const ok = c.ok ?? q.filter(t => t.status === 'ok').length;
+  const fail = c.fail ?? q.filter(t => ['fail', 'reconciliation_unknown'].includes(t.status)).length;
+  const rate = c.rate ?? (ok + fail ? Math.round(100 * ok / (ok + fail)) : null);
+  metric($('work-metrics'), [
+    ['队列', c.tasks ?? q.length, 'info'],
+    ['待处理', q.filter(t => t.status === 'pending').length, 'info'],
+    ['进行中', q.filter(t => ['running', 'waiting_code'].includes(t.status)).length, 'info'],
+    ['待输码', c.waiting_code ?? q.filter(t => t.status === 'waiting_code').length, 'warn'],
+    ['成功', ok, 'ok'], ['失败', fail, 'err'],
+    ['成功率', rate === null ? '—' : rate + '%', rate === null ? '' : (rate >= 80 ? 'ok' : 'err')],
+    ['凭证', c.creds ?? s.creds ?? 0, 'ok'],
+  ]);
+}
+
+function renderWorkEngine(s) {
+  workEngine = s;
+  renderWorkMetrics();
+  const q = s.queue || [];
+  const engineText = (s.running ? '运行中' : '已停止') + (s.halted ? ' · 已熔断' : '') + ` · 本批成功 ${s.batch_ok || 0} / 尝试 ${s.batch_attempts || 0}` + (s.stop_reason ? ' · ' + s.stop_reason : '');
+  if ($('engine-state')) $('engine-state').textContent = engineText;
+  if ($('hz-engine-state')) $('hz-engine-state').textContent = engineText;
+  if ($('work-recent')) {
+    const bad = q.filter(t => ['fail', 'reconciliation_unknown'].includes(t.status)).slice(-6).reverse();
+    $('work-recent').innerHTML = bad.length
+      ? bad.map(t => `<div style="font-size:12px;color:var(--muted)">${esc(t.phone || '无号码')} · ${esc(t.stage || t.status)} · 代理#${esc(t.proxy ?? '—')}${t.retries ? ' · 重试' + t.retries : ''}</div>`).join('')
+      : '暂无失败任务';
+  }
+  // 只有「正在编辑队列表格」或「筛选菜单展开」时才跳过刷新，避免打断操作；
+  // 仪表盘没有队列输入，因此不会命中这两个条件。
+  const editingQueue = document.activeElement?.matches('#queue-body input');
+  const filterOpen = $('queue-filter-menu') && !$('queue-filter-menu').hidden;
+  if (editingQueue || filterOpen || !$('queue-body')) return;
+  queueData = q;
+  renderQueueRows();
+}
+
+function renderWorkGateway() {
+  if (!$('upstream-state') || !workGateway) return;
+  const g = workGateway, u = workUpstream || {};
+  $('upstream-state').innerHTML = `${g.alive ? '<span class="tag ok">在线</span>' : '<span class="tag bad">离线</span>'} · 号池账号 ${g.accounts} · 可用模型 ${g.models}<br><small style="color:var(--muted)">OpenAI 上游：/v1 · 调用 ${u.requests || 0}（成功 ${u.success || 0} / 失败 ${u.failed || 0}）</small>`;
+}
+
+function renderWorkDashboard(dash) {
+  workDashboard = dash;
+  renderWorkMetrics();
+  if ($('trend-rate')) {
+    // 空时段沿用上一段成功率：折线保持时间轴连续，而不是把空洞压缩掉。
+    const rates = [];
+    let lastRate = null;
+    (dash.trend || []).forEach(t => {
+      if (t.rate !== null && t.rate !== undefined) lastRate = t.rate;
+      rates.push(lastRate);
     });
-    tb.innerHTML = rows.length ? rows.map(({task:t, index:i}) => {
-      const acts = [];
-      if (t.status === 'waiting_code')
-        acts.push(`<input class="code" data-i="${i}" placeholder="输码">` +
-                  `<button class="secondary" data-code="${i}">续</button>`);
-      if (['fail','reconciliation_unknown'].includes(t.status))
-        acts.push(`<button class="secondary" data-retry="${i}">重试</button>`);
-      acts.push(`<button class="danger" data-rm="${i}">移除</button>`);
-      return `<tr>
-      <td>${esc(t.phone || '—')}</td><td>#${esc(t.proxy ?? '—')}</td>
-      <td>${esc(t.stage || '—')}</td>
-      <td><span class="tag ${t.status === 'running' ? 'run' : t.status === 'ok' ? 'ok' : t.status === 'fail' ? 'bad' : 'wait'}">${esc(t.status || 'pending')}</span></td>
-      <td>${t.cred ? '★' : ''}</td>
-      <td>${acts.join(' ')}</td></tr>`;
-    }).join('') : '<tr><td colspan="6" style="color:var(--muted)">空</td></tr>';
-    tb.querySelectorAll('[data-code]').forEach(b => b.onclick = async () => {
-      const i = b.dataset.code, input = tb.querySelector(`.code[data-i="${i}"]`);
-      if (!input.value.trim()) return toast('先填验证码');
-      try { await api('/queue/code', {method:'POST', body: JSON.stringify({idx:+i, code:input.value.trim()})});
-        toast('已提交'); loadWork(); } catch (e) { toast(e.message); }
-    });
-    tb.querySelectorAll('[data-retry]').forEach(b => b.onclick = async () => {
-      try { await api('/queue/retry', {method:'POST', body: JSON.stringify({idx:+b.dataset.retry})});
-        toast('已重排'); loadWork(); } catch (e) { toast(e.message); }
-    });
-    tb.querySelectorAll('[data-rm]').forEach(b => b.onclick = async () => {
-      try { await api('/queue/remove', {method:'POST', body: JSON.stringify({idx:+b.dataset.rm})});
-        loadWork(); } catch (e) { toast(e.message); }
-    });
-  } catch (e) { metric($('work-metrics'), [['引擎', '未启动', 'err']]); }
+    const c = dash.cards || {};
+    $('trend-rate').textContent = c.rate === null || c.rate === undefined ? '—' : c.rate + '%';
+    $('trend-rate-note').textContent = `按${dash.bucket_label || '时段'}分桶 · ${(dash.trend || []).length} 个时段 · 累计 成功 ${c.lifetime_ok ?? 0} / 失败 ${c.lifetime_fail ?? 0}`;
+    $('trend-rate-spark').innerHTML = sparkline(rates, '#356ae6', '注册成功率趋势');
+  }
+  if ($('trend-vol')) {
+    const vols = (dash.trend || []).map(t => t.total);
+    $('trend-vol').textContent = vols.reduce((a, b) => a + b, 0);
+    $('trend-vol-note').textContent = `每${dash.bucket_label || '时段'}任务数 · 峰值 ${vols.length ? Math.max(...vols) : 0}`;
+    $('trend-vol-spark').innerHTML = sparkline(vols, '#12a594', '处理量趋势');
+  }
+  if ($('proxy-bubbles')) {
+    const rows = dash.proxies || [], shown = rows.slice(0, 12);
+    $('proxy-bubbles').innerHTML = shown.length ? shown.map(r => {
+      const color = r.rate === null ? '#94a3b8' : r.rate >= 80 ? '#16a34a' : r.rate >= 40 ? '#d97706' : '#dc2626';
+      const label = r.proxy === 'auto' ? '自动' : '#' + r.proxy;
+      const rate = r.rate === null ? '无结果' : r.rate + '%';
+      return `<span class="bubble"><i style="background:${color}"></i>${esc(label)} 成功 <b>${r.ok}</b> / 失败 <b>${r.fail}</b><span> · ${rate}</span></span>`;
+    }).join('') + ((dash.proxy_total || rows.length) > shown.length
+      ? `<span class="trend-note">另有 ${(dash.proxy_total || rows.length) - shown.length} 个代理未展开</span>` : '')
+      : '<span class="trend-note">暂无代理数据</span>';
+  }
+  if ($('work-fail')) {
+    const rows = Object.entries(dash.stages || {});
+    $('work-fail').innerHTML = rows.length ? rows.map(([name, count]) =>
+      `<span class="bubble"><i style="background:#dc2626"></i>${esc(name)} <b>${count}</b></span>`).join('') : '<span class="trend-note">暂无失败任务</span>';
+  }
+}
+
+// #2「网关状态请求未结束时，已返回的仪表盘数据仍为空白」{意图：各卡独立渲染；同一接口只保留一个在途请求，8秒超时后允许下轮重试。}
+function refreshWorkPart(path, render, onError) {
+  if (workRequests.has(path)) return workRequests.get(path);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 8000);
+  const request = api(path, {signal: controller.signal}).then(render).catch(onError).finally(() => {
+    clearTimeout(timer);
+    workRequests.delete(path);
+  });
+  workRequests.set(path, request);
+  return request;
+}
+
+function loadWork() {
+  const showError = (id, text) => () => { if ($(id)) $(id).textContent = text; };
+  return Promise.allSettled([
+    refreshWorkPart('/engine/state', renderWorkEngine, () => {
+      showError('engine-state', '引擎状态读取失败，稍后自动重试')();
+      showError('hz-engine-state', '引擎状态读取失败，稍后自动重试')();
+    }),
+    refreshWorkPart('/dashboard', renderWorkDashboard, showError('trend-rate-note', '统计读取失败，稍后自动重试')),
+    refreshWorkPart('/gateway/state', value => { workGateway = value; renderWorkGateway(); }, showError('upstream-state', '号池状态读取失败，稍后自动重试')),
+    refreshWorkPart('/upstream/stats', value => { workUpstream = value; renderWorkGateway(); }, showError('upstream-state', '上游统计读取失败，稍后自动重试')),
+    refreshWorkPart('/watch', watch => {
+      const st = watch.state || {}, stats = st.stats || {};
+      $('work-watch').innerHTML = `${watch.config?.enabled ? '<span class="tag ok">监控中</span>' : '<span class="tag wait">已暂停</span>'} · 监控项目 ${Object.keys(st.projects || {}).length}`
+        + `<br><small style="color:var(--muted)">事件 ${stats.events || 0} · 派发 ${stats.dispatched || 0} · 注册成功 ${stats.success || 0} · 收码估算 ¥${Number(stats.cost || 0).toFixed(2)}</small>`
+        + (watch.paused ? `<br><small style="color:var(--muted)">${esc(watch.paused)}</small>` : '');
+    }, showError('work-watch', '监控状态读取失败，稍后自动重试')),
+    refreshWorkPart('/gateway-operations/state', ops => {
+      const o = ops.outbox || {};
+      $('work-ops').innerHTML = `${ops.health?.ok === false ? '<span class="tag bad">网关离线</span>' : '<span class="tag ok">网关在线</span>'} · 入池成功 ${o.success || 0} / 失败 ${o.failed || 0}`
+        + `<br><small style="color:var(--muted)">已扫描 ${o.total || 0} · 待处理 ${o.pending || 0}</small>`;
+    }, showError('work-ops', '入池状态读取超时或失败，稍后自动重试')),
+  ]);
 }
 $('btn-upstream-key').onclick = async () => {
   try { await api('/upstream/key', {method:'POST', body:JSON.stringify({api_key:$('upstream-key').value.trim()})}); $('upstream-key').value = ''; $('upstream-key-state').textContent = '上游 Key 已保存；NewAPI 地址为当前服务 /v1'; toast('上游 Key 已保存'); }
@@ -933,7 +1108,7 @@ function renderContinuous(ct) {
   const bal = ct.balance === null || ct.balance === undefined ? '' : ` ¥${ct.balance}`;
   $('ct-status').innerHTML =
     `${on} ${pause} <span style="color:var(--muted);font-size:13px;">` +
-    `今日加号 ${ct.added_today}/${cfg.daily_max ?? '—'} · 队列积压 ${ct.queue_active} · ` +
+    `今日派发 ${ct.added_today}/${cfg.daily_max ?? '—'} · 注册成功 ${ct.registered_today ?? 0} · 队列积压 ${ct.queue_active} · ` +
     `代理池 ${ct.proxy_available ?? '—'}/${ct.proxy_total ?? '—'} 可用 · 豪猪余额${bal || ' —'}</span>`;
   $('ct-logs').innerHTML = (ct.logs || []).slice().reverse()
     .map(l => `<div>${esc(l)}</div>`).join('') || '<div style="color:var(--muted)">暂无日志</div>';
@@ -1228,7 +1403,26 @@ async function loadAccounts() {
   } catch (e) {}
 }
 $('btn-acc-import-gw').onclick = async () => { try { const r = await api('/credentials/import-gateway', {method:'POST'}); toast(r.imported + ' 个凭证已导入网关'); loadAccounts(); } catch (e) { toast(e.message); } };
-$('btn-acc-export').onclick = () => { window.open(API + '/credentials/export'); };
+async function exportCredentials() {
+  const button = $('btn-acc-export');
+  button.disabled = true;
+  try {
+    const payload = await api('/credentials/export?format=agent2api', {cache:'no-store'});
+    if (!Array.isArray(payload?.accounts)) throw new Error('导出格式不匹配，请更新并重启注册机');
+    if (!payload.accounts.length) throw new Error('没有可导出的账号凭证');
+    if (payload.version !== 2 || payload.accounts.some(item => !item.id || item.provider !== 'trae' || !item.uid || !(item.accessToken || item.refreshToken))) throw new Error('不是 Agent2API 批量账号格式，请更新并重启注册机');
+    const blob = new Blob([JSON.stringify(payload, null, 2) + '\n'], {type:'application/json;charset=utf-8'});
+    const url = URL.createObjectURL(blob), link = document.createElement('a');
+    link.href = url;
+    link.download = `trae-agent2api-${payload.accounts.length}-${payload.exportedAt}.json`;
+    document.body.appendChild(link); link.click(); link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    const skipped = payload.summary?.skippedFiles?.length || 0;
+    toast(`已导出 ${payload.accounts.length} 个账号到一个 JSON 文件` + (skipped ? `；${skipped} 个异常文件已跳过，见文件内 summary` : ''));
+  } catch (error) { toast(error.message); }
+  finally { button.disabled = false; }
+}
+$('btn-acc-export').onclick = exportCredentials;
 
 /* ── 通用表头排序/筛选（渠道表 + 代理池表，交互与注册队列一致） ── */
 function bindTableSortFilter(prefix, menuId, cardSelector, sortKeys, filterKeys, fieldFn, render, sorters) {
@@ -1460,10 +1654,11 @@ async function loadLogs() {
 const loaders = {work: loadWork, haozhu: loadHaozhu, accounts: loadAccounts,
                  'proxy-page': loadProxy, 'metrics-page': loadMetrics,
                  gateway: loadGateway, settings: loadSettings,
+                 'market-watch': loadMarketWatch, operations: loadOperations, 'api-access': loadAccess,
                  'logs-page': loadLogs};
 function loadCurrent() {
   const cur = document.querySelector('.page.on');
-  if (cur?.id === 'settings' && cur.contains(document.activeElement)) return;
+  if (cur && ['settings','market-watch','operations','api-access'].includes(cur.id) && cur.contains(document.activeElement) && document.activeElement.matches('input,textarea,select')) return;
   if (cur && loaders[cur.id]) loaders[cur.id]();
 }
 showPage(location.hash.slice(1));

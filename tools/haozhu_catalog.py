@@ -214,7 +214,10 @@ class Catalog:
     def keepalive_if_due(self, now=None):
         with self.lock:
             now = time.monotonic() if now is None else now
-            if not self.session or now - self.last_activity < KEEPALIVE_INTERVAL:
+            # {意图：与调用方的 last_activity + KEEPALIVE_INTERVAL 用同一浮点表达式比较。
+            # 若写成 now - last_activity < INTERVAL，(last+INTERVAL)-last 的往返舍入会得到
+            # 604799.9999999999，把恰好到期的边界误判成未到期（曾使保活测试间歇失败）。}
+            if not self.session or now < self.last_activity + KEEPALIVE_INTERVAL:
                 return False
             self._check(0)
             self.last_activity = now

@@ -23,7 +23,7 @@ import time
 import uuid
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-LAB = pathlib.Path(os.environ.get("TRAE_SLIDER_LIB", str(ROOT / "slider-captcha-lab-main")))
+LAB = pathlib.Path(os.environ.get("TRAE_SLIDER_LIB", str(pathlib.Path(__file__).resolve().parents[1] / "vendor" / "slider")))
 sys.path.insert(0, str(LAB))
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
 
@@ -31,8 +31,8 @@ from playwright.async_api import TimeoutError as BrowserTimeout  # noqa: E402
 from page_diagnostics import PageDiagnostics  # noqa: E402
 import trae_pipeline_lib as lib  # noqa: E402
 
-DATA_DIR = pathlib.Path(os.environ.get("TRAE_DATA_DIR", str(ROOT / "tmp")))
-PROXY_FILE = pathlib.Path(os.environ.get("TRAE_PROXY_FILE", str(ROOT / "Webshare 250 proxies.txt")))
+DATA_DIR = pathlib.Path(os.environ.get("TRAE_DATA_DIR", str(pathlib.Path(__file__).resolve().parents[1] / "data")))
+PROXY_FILE = pathlib.Path(os.environ.get("TRAE_PROXY_FILE", str(DATA_DIR / "config" / "proxies.txt")))
 LEDGER = DATA_DIR / "proxy-ledger.json"
 PROFILES = DATA_DIR / "cloak-profiles"
 RUNS_LOG = DATA_DIR / "register-runs.jsonl"
