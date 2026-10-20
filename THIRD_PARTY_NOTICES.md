@@ -15,4 +15,4 @@
 
 CloakBrowser 官方条款：<https://github.com/CloakHQ/CloakBrowser/blob/main/BINARY-LICENSE.md>。本次核对版本 v1.3（July 2026），Git blob `3a3acbfc9d0081ad4077575a21001361d383c881`。其 Restrictions 涉及浏览器二进制再分发和打包；Cloud／第三方使用段区分用户自行下载依赖与对客户提供浏览器服务；Acceptable Use 包含 `automated account creation` 限制。Python wrapper 的 MIT 不能替代二进制条款。
 
-本项目主许可证尚未指定，第三方许可不自动授予整个项目相同许可。豪猪模块的移植来源、协议辅助库参考关系和自有代码贡献权属仍需确认。这里不重写或删减任何现有第三方版权／许可。
+本项目自有代码现按 GNU GPL v3 或更高版本发布，见根目录 `COPYING`。该许可证不替换、不扩大第三方组件、外部服务、浏览器内核、模型、字体或其他随附资产的原有条款。豪猪模块的移植来源、协议辅助库参考关系和自有代码贡献权属仍需确认，详见 `SOURCE_PROVENANCE_PENDING.md`。现有第三方版权／许可保持完整。
